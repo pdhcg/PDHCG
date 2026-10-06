@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="745 365 480 480">
+  <title>PDHCG — CG monogram</title>
+  <desc>The open C flows into the upper curve of G. A separate lower G stroke and inward crossbar preserve both letters.</desc>
+  <defs>
+    <linearGradient id="cg-ribbon" x1="840" y1="470" x2="1120" y2="715" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#00adb7"/>
+      <stop offset=".55" stop-color="#007caa"/>
+      <stop offset="1" stop-color="#0b2c62"/>
+    </linearGradient>
+    <linearGradient id="g-bowl" x1="982" y1="692" x2="1190" y2="665" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#086fd7"/>
+      <stop offset=".4" stop-color="#29377c"/>
+      <stop offset="1" stop-color="#0b2c62"/>
+    </linearGradient>
+  </defs>
+  <rect x="745" y="365" width="480" height="480" rx="88" fill="#fff"/>
+  <!-- The continuous ribbon follows the C and upper G in the supplied logo. -->
+  <path fill="url(#cg-ribbon)" d="M1032 524
+    C1009 480 966 451 918 452
+    C837 450 772 520 768 590
+    C763 662 806 724 869 731
+    C922 739 952 707 991 664
+    L1039 613
+    C1088 562 1147 552 1199 597
+    C1178 552 1141 531 1100 538
+    C1041 542 1004 579 958 624
+    L928 653
+    C897 681 860 680 836 653
+    C800 615 816 555 848 522
+    C901 470 980 484 1032 524Z"/>
+  <!-- An open throat and substantial crossbar make this a G, not a loop. -->
+  <path fill="url(#g-bowl)" d="M1077 631H1202
+    C1208 710 1165 762 1096 764
+    C1040 765 1000 730 977 681
+    L995 662
+    C1025 703 1053 722 1090 719
+    C1119 717 1142 695 1150 663
+    H1099Z"/>
+</svg>

@@ -35,13 +35,13 @@ m.setParams(TimeLimit=3600, LogLevel=1)
 | `UseBoundObjectiveRescaling` | bool | True | Enable bound objective rescaling |
 | `UseConePreservingScaling` | bool | True | Broadcast one scaling value over every cone block |
 | `EvalFrequency` | int | 200 | Frequency of termination criteria evaluation |
-| `NonDiagonalQuadraticMode` | str | "inner" | Non-diagonal Q update: "inner" or single-projection "linearized" |
+| `NonDiagonalQuadraticMode` | str | "inner" | Non-diagonal quadratic update: "inner" (proximal solve) or "linearized" (single projected step) |
 
 ### Inner Solver Parameters
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `InnerIterLimit` | int | 1000 | Max iterations for inner CG solver |
+| `InnerIterLimit` | int | 1000 | Max iterations for the inner projected-gradient solver |
 | `InnerInitTol` | float | 1e-3 | Initial tolerance for inner solver |
 | `InnerMinTol` | float | 1e-9 | Minimum tolerance for inner solver |
 | `DiagJacobiPrecond` | bool | True | Use the Jacobi diagonal preconditioner in the inner subproblem. Set to `False` to disable. |

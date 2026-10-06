@@ -1,51 +1,66 @@
-site_name: PDHCG Documentation
+site_name: PDHCG
 site_description: GPU-Accelerated Solver for Quadratic Conic Programming
 site_author: Hongpei Li
-site_url: https://lhongpei.github.io/PDHCG
-exclude_docs: README.md
+site_url: https://lhongpei.github.io/PDHCG/
+exclude_docs: |
+  README.md
+  overrides/
 
 repo_name: Lhongpei/PDHCG
 repo_url: https://github.com/Lhongpei/PDHCG
 
 nav:
   - Home: index.md
-  - Installation: installation.md
-  - Python API:
-    - Quick Start: python/quickstart.md
-    - Model Class: python/model.md
-    - Parameters: python/parameters.md
-  - C API:
-    - Overview: c/overview.md
-    - Types: c/types.md
-    - Functions: c/functions.md
-    - Combined Reference: C_API.md
-  - Examples: examples.md
-  - Migrating to 0.3: migration.md
+  - Documentation:
+    - Overview: documentation/index.md
+    - Getting started:
+      - Installation: installation.md
+      - Python quick start: python/quickstart.md
+      - Examples: examples.md
+    - Python API:
+      - Model class: python/model.md
+      - Parameters: python/parameters.md
+    - C API:
+      - Overview: c/overview.md
+      - Types: c/types.md
+      - Functions: c/functions.md
+      - Combined reference: C_API.md
+    - Migration:
+      - Migrating to 0.3: migration.md
+  - Algorithm: algorithm.md
   - Citation: citation.md
 
 theme:
   name: material
+  custom_dir: docs/overrides
+  logo: assets/cg-mark.svg
+  favicon: assets/cg-mark.svg
+  icon:
+    repo: fontawesome/brands/github
+  font: false
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
-      primary: indigo
-      accent: indigo
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
-      primary: indigo
-      accent: indigo
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
   features:
-    - navigation.instant
     - navigation.tracking
+    - navigation.tabs
+    - navigation.indexes
     - navigation.sections
-    - navigation.expand
     - navigation.top
+    - navigation.footer
+    - toc.follow
     - search.suggest
     - search.highlight
     - content.code.copy
@@ -98,10 +113,15 @@ markdown_extensions:
 
 extra_javascript:
   - javascripts/mathjax.js
-  - https://polyfill.io/v3/polyfill.min.js?features=es6
   - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
 
+extra_css:
+  - stylesheets/extra.css
+
+copyright: Copyright &copy; 2024–2026 Hongpei Li, Haihao Lu · Apache 2.0
+
 extra:
+  generator: false
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/Lhongpei/PDHCG

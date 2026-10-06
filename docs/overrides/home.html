@@ -1,0 +1,59 @@
+{% extends "main.html" %}
+
+{% block extrahead %}
+  <meta property="og:title" content="PDHCG: A Scalable Solver for Convex Conic Quadratic Programming">
+  <meta property="og:description" content="An open-source first-order solver for large-scale quadratic and conic programming. Built for NVIDIA GPUs, with Python and C interfaces.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="{{ page.canonical_url }}">
+{% endblock %}
+
+{% block header %}
+<header class="site-header" data-md-component="header">
+  <nav class="site-nav" aria-label="Main navigation">
+    <a class="site-brand" href="{{ 'index.html' | url }}" aria-label="PDHCG home">
+      <img src="{{ 'assets/pdhcg-logo.png' | url }}" width="180" height="60" alt="PDHCG">
+    </a>
+    <div class="site-menu">
+      {% if config.theme.palette and not config.theme.palette is mapping %}
+        <div class="site-theme">
+          {% include "partials/palette.html" %}
+          {% include "partials/javascripts/palette.html" %}
+        </div>
+      {% endif %}
+      <div class="site-links">
+        <a href="{{ 'documentation/' | url }}">Documentation</a>
+        <a href="{{ 'algorithm/' | url }}">Algorithm</a>
+        <a href="{{ 'citation/' | url }}">Citation</a>
+      </div>
+    </div>
+    {% if config.repo_url %}
+      <div class="site-github">
+        {% include "partials/source.html" %}
+      </div>
+    {% endif %}
+  </nav>
+</header>
+{% endblock %}
+
+{% block tabs %}{% endblock %}
+{% block site_nav %}{% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+  <script src="{{ 'javascripts/home.js' | url }}"></script>
+{% endblock %}
+
+{% block container %}
+<div class="pdhcg-home md-typeset" data-md-component="content">
+  {{ page.content }}
+</div>
+{% endblock %}
+
+{% block footer %}
+<footer class="site-footer">
+  <div class="site-footer-inner">
+    <span class="site-copyright">© 2024–2026 Hongpei Li, Haihao Lu</span>
+    <div><a href="{{ config.repo_url }}/blob/main/LICENSE">Apache 2.0</a><a href="{{ 'citation/' | url }}">Cite PDHCG</a><a href="{{ config.repo_url }}">GitHub ↗</a></div>
+  </div>
+</footer>
+{% endblock %}
