@@ -1,0 +1,101 @@
+name: Publish to PyPI
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and test source distribution
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CMAKE_BUILD_PARALLEL_LEVEL: 2
+      OMP_NUM_THREADS: 2
+      OPENBLAS_NUM_THREADS: 1
+      MKL_NUM_THREADS: 1
+      PDHCG_TEST_CUDA: 0
+      PDHCG_TEST_CUDA_LIBRARIES: 0
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Check release version
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import re
+          import tomllib
+
+          version = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
+          cmake = Path("CMakeLists.txt").read_text()
+          native_version = ".".join(
+              re.search(rf"set\(PDHCG_VERSION_{part}\s+(\d+)\)", cmake)[1]
+              for part in ("MAJOR", "MINOR", "PATCH")
+          )
+          if version != native_version:
+              raise SystemExit(f"Python version {version} != CMake version {native_version}")
+          tag = os.environ.get("RELEASE_TAG", "")
+          if tag and tag != f"v{version}":
+              raise SystemExit(f"Release tag {tag} != v{version}")
+          print(f"Building PDHCG {version}")
+          PY
+      - name: Install build and test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build libopenblas-dev liblapack-dev zlib1g-dev
+          python -m pip install build twine pytest pytest-cov 'cvxpy>=1.6'
+      - name: Build source distribution
+        run: python -m build --sdist
+      - name: Check package metadata
+        run: python -m twine check --strict dist/*.tar.gz
+      - name: Build CPU wheel from source distribution
+        run: >-
+          python -m pip wheel --no-deps dist/*.tar.gz
+          -Ccmake.define.PDHCG_DEVICES=CPU --wheel-dir wheelhouse
+      - name: Check source and packaged licenses
+        run: python .github/check_license.py --artifacts dist/*.tar.gz wheelhouse/*.whl
+      - name: Install and test packaged CPU backend
+        run: |
+          python -m pip install wheelhouse/*.whl
+          python -c "import pdhcg; pdhcg.print_devices(); assert pdhcg.built_devices() == ('cpu',)"
+          python -m pytest tests --no-cov
+      - name: Save source distribution
+        uses: actions/upload-artifact@v4
+        with:
+          name: pdhcg-sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    name: Upload to PyPI
+    needs: build
+    if: github.event_name == 'release' && github.repository == 'pdhcg/PDHCG'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment:
+      name: pypi
+      url: https://pypi.org/project/pdhcg/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: pdhcg-sdist
+          path: dist
+      - name: Publish source distribution
+        uses: pypa/gh-action-pypi-publish@release/v1
