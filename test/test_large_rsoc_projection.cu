@@ -1,6 +1,3 @@
-/* SPDX-License-Identifier: Apache-2.0 */
-
-#include "device/cuda/checks.h"
 /*
 Copyright 2026 Hongpei Li
 
@@ -17,6 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+#include "device/cuda/checks.h"
 #include "internal_types.h"
 #include "pdhcg_cone_common_kernels.h"
 #include "pdhcg_rsoc_cone_kernels.h"
