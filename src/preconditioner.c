@@ -204,12 +204,18 @@ qp_problem_t *deepcopy_problem(const qp_problem_t *prob)
     new_prob->constraint_upper_bound = safe_malloc(con_bytes);
     new_prob->affine_cone_offset = safe_malloc(con_bytes);
 
-    memcpy(new_prob->variable_lower_bound, prob->variable_lower_bound, var_bytes);
-    memcpy(new_prob->variable_upper_bound, prob->variable_upper_bound, var_bytes);
-    memcpy(new_prob->objective_vector, prob->objective_vector, var_bytes);
-    memcpy(new_prob->constraint_lower_bound, prob->constraint_lower_bound, con_bytes);
-    memcpy(new_prob->constraint_upper_bound, prob->constraint_upper_bound, con_bytes);
-    memcpy(new_prob->affine_cone_offset, prob->affine_cone_offset, con_bytes);
+    if (var_bytes > 0)
+    {
+        memcpy(new_prob->variable_lower_bound, prob->variable_lower_bound, var_bytes);
+        memcpy(new_prob->variable_upper_bound, prob->variable_upper_bound, var_bytes);
+        memcpy(new_prob->objective_vector, prob->objective_vector, var_bytes);
+    }
+    if (con_bytes > 0)
+    {
+        memcpy(new_prob->constraint_lower_bound, prob->constraint_lower_bound, con_bytes);
+        memcpy(new_prob->constraint_upper_bound, prob->constraint_upper_bound, con_bytes);
+        memcpy(new_prob->affine_cone_offset, prob->affine_cone_offset, con_bytes);
+    }
     new_prob->constraint_matrix =
         deepcopy_csr_component(prob->constraint_matrix, prob->num_constraints, prob->constraint_matrix_num_nonzeros);
     new_prob->objective_sparse_matrix = deepcopy_csr_component(

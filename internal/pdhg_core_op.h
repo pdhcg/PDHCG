@@ -45,26 +45,24 @@ extern "C"
 
     void compute_residual(pdhg_solver_state_t *state, norm_type_t optimality_norm);
 
-    void compute_infeasibility_information(pdhg_solver_state_t *state);
-
-    double estimate_maximum_singular_value(cusparseHandle_t sparse_handle,
-                                           cublasHandle_t blas_handle,
-                                           const cu_sparse_matrix_csr_t *A,
-                                           const cu_sparse_matrix_csr_t *AT,
+    double estimate_maximum_singular_value(pdhcg_device_sparse_t sparse_handle,
+                                           pdhcg_device_blas_t blas_handle,
+                                           const device_sparse_matrix_csr_t *A,
+                                           const device_sparse_matrix_csr_t *AT,
                                            int max_iterations,
                                            double tolerance,
                                            struct grid_context_s *ctx);
 
-    double estimate_quadratic_objective_norm(cusparseHandle_t sparse_handle,
-                                             cublasHandle_t blas_handle,
+    double estimate_quadratic_objective_norm(pdhcg_device_sparse_t sparse_handle,
+                                             pdhcg_device_blas_t blas_handle,
                                              quadratic_objective_term_t *quadratic_objective,
                                              int num_variables,
                                              int max_iterations,
                                              double tolerance,
                                              struct grid_context_s *ctx);
 
-    double estimate_quadratic_objective_minimum_eigenvalue(cusparseHandle_t sparse_handle,
-                                                           cublasHandle_t blas_handle,
+    double estimate_quadratic_objective_minimum_eigenvalue(pdhcg_device_sparse_t sparse_handle,
+                                                           pdhcg_device_blas_t blas_handle,
                                                            quadratic_objective_term_t *quadratic_objective,
                                                            int num_variables,
                                                            double spectral_norm,

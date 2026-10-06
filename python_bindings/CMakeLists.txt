@@ -1,50 +1,37 @@
-# python_bindings/CMakeLists.txt
+# Copyright 2026 Hongpei Li
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#         http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
-cmake_minimum_required(VERSION 3.20)
-
-# sources
-set(PYBIND_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/_core_bindings.cpp)
-
-# build the pybind11 module
-pybind11_add_module(_pdhcg_core MODULE ${PYBIND_SOURCES})
-
-target_link_libraries(_pdhcg_core PRIVATE
-    pdhcg_core
-)
-target_include_directories(_pdhcg_core PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../internal
-)
-
-# set rpath so that the module can find the shared libraries at runtime
-# Include PSQP build directory in RPATH if PSQP is available
-if(TARGET PSQP)
-    set(_PDHCG_PYTHON_RPATH "$ORIGIN/../lib;${CMAKE_BINARY_DIR}/_deps/psqp-build")
-else()
-    set(_PDHCG_PYTHON_RPATH "$ORIGIN/../lib")
-endif()
-
-set_target_properties(_pdhcg_core PROPERTIES
-  BUILD_WITH_INSTALL_RPATH TRUE
-  INSTALL_RPATH "${_PDHCG_PYTHON_RPATH}"
-  BUILD_RPATH   "${_PDHCG_PYTHON_RPATH}"
-)
-
-# better error messages from pybind11
-target_compile_definitions(_pdhcg_core PRIVATE PYBIND11_DETAILED_ERROR_MESSAGES=1)
-
-add_custom_command(TARGET _pdhcg_core POST_BUILD
-    COMMAND ${Python3_EXECUTABLE} -m pybind11_stubgen _pdhcg_core -o ${CMAKE_CURRENT_SOURCE_DIR}/../pdhcg
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-    COMMENT "Auto-generating _pdhcg_core.pyi type stubs for Python IDEs..."
-)
-
-install(TARGETS _pdhcg_core
-  LIBRARY DESTINATION pdhcg
-  RUNTIME DESTINATION pdhcg
-  ARCHIVE DESTINATION pdhcg
-)
-
-install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../pdhcg/_pdhcg_core.pyi
-  DESTINATION pdhcg
-  OPTIONAL
-)
+# One extension per device, all built from the same binding source and C solver.
+# Imports are lazy, so CPU use does not load any CUDA libraries.
+set(PDHCG_PYTHON_DEVICES "")
+foreach(device IN LISTS PDHCG_DEVICES)
+    string(TOLOWER "${device}" suffix)
+    set(module _pdhcg_${suffix})
+    pybind11_add_module(${module} MODULE _core_bindings.cpp)
+    target_link_libraries(${module} PRIVATE pdhcg::${suffix})
+    target_include_directories(${module} PRIVATE "${PROJECT_SOURCE_DIR}/internal")
+    target_compile_definitions(${module} PRIVATE
+        PDHCG_PYTHON_MODULE=${module} PYBIND11_DETAILED_ERROR_MESSAGES=1)
+    # Prevent symbols from static dependencies from interposing on another
+    # backend even when Python extensions are imported with RTLD_GLOBAL.
+    if(UNIX AND NOT APPLE)
+        target_link_options(${module} PRIVATE "LINKER:--exclude-libs,ALL")
+    endif()
+    set_target_properties(${module} PROPERTIES INSTALL_RPATH "$ORIGIN/../lib")
+    install(TARGETS ${module} LIBRARY DESTINATION pdhcg RUNTIME DESTINATION pdhcg)
+    string(APPEND PDHCG_PYTHON_DEVICES "\"${suffix}\", ")
+endforeach()
+string(TOLOWER "${PDHCG_DEFAULT_DEVICE}" PDHCG_PYTHON_DEFAULT_DEVICE)
+configure_file(_build_config.py.in "${CMAKE_CURRENT_BINARY_DIR}/_build_config.py" @ONLY)
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/_build_config.py" DESTINATION pdhcg)

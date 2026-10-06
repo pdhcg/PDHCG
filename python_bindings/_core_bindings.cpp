@@ -24,7 +24,7 @@ limitations under the License.
 #include <csignal>
 #include <cstdint>
 #include <cstring>
-#include <cuda_runtime.h>
+#include "device_general_op.h"
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -291,6 +291,7 @@ static py::dict get_default_params_py()
     // limits
     d["time_sec_limit"] = p.termination_criteria.time_sec_limit;
     d["iteration_limit"] = p.termination_criteria.iteration_limit;
+    d["num_threads"] = p.num_threads;
 
     // rescaling
     d["curtis_reid_iterations"] = p.curtis_reid_iterations;
@@ -410,6 +411,7 @@ static void parse_params_from_python(py::object params_obj, pdhg_parameters_t *p
     // limits
     getf("time_sec_limit", p->termination_criteria.time_sec_limit);
     geti("iteration_limit", p->termination_criteria.iteration_limit);
+    geti("num_threads", p->num_threads);
 
     // rescaling
     geti("curtis_reid_iterations", p->curtis_reid_iterations);
@@ -711,8 +713,13 @@ static py::dict solve_once(py::object Q,
                            py::object affine_g = py::none(),
                            py::object affine_cones = py::none())
 {
-    static std::once_flag cuda_init_flag;
-    std::call_once(cuda_init_flag, []() { cudaFree(0); });
+    static std::once_flag device_init_flag;
+    std::call_once(device_init_flag, []() {
+        int status = pdhcg_device_initialize();
+        if (status != 0)
+            throw std::runtime_error(std::string("Could not initialize PDHCG device '") +
+                                     pdhcg_device_name() + "' (status " + std::to_string(status) + ")");
+    });
 
     PyMatrixView view_a, view_q, view_r, view_f;
     if (!A.is_none())
@@ -1135,10 +1142,12 @@ static py::dict read_problem_file_py(const std::string &path)
     return out;
 }
 
-PYBIND11_MODULE(_pdhcg_core, m)
+PYBIND11_MODULE(PDHCG_PYTHON_MODULE, m)
 {
     m.doc() = "pdhcg core bindings (auto-detect dense/CSR/CSC/COO; initialize "
               "default params here)";
+
+    m.attr("device") = pdhcg_device_name();
 
     m.def("get_default_params", &get_default_params_py, "Return default PDHG parameters as a dict");
     m.def("validate_params", &validate_params_py, py::arg("params"), "Validate a PDHG parameter dict");

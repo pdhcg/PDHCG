@@ -13,6 +13,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
+#include "checks.h"
 #include "cusparse_compat.h"
 #include "spmv_backend.h"
 #include "utils.h"
@@ -25,6 +26,18 @@ limitations under the License.
 // #define FUSE_ELEMENT_OP 1
 // #endif
 // #endif
+
+struct pdhcg_spmv_ctx
+{
+    cusparseSpMatDescr_t mat;
+    cusparseDnVecDescr_t vec_x;
+    cusparseDnVecDescr_t vec_y;
+    void *buffer;
+    void *descr;
+    void *plan;
+    int num_rows;
+    int num_nonzeros;
+};
 
 extern "C" bool pdhcg_use_spmvop_by_default(void)
 {
@@ -43,16 +56,15 @@ static void pdhcg_spmv_buffer_size(cusparseHandle_t sparse_handle,
 {
 #if PDHCG_USE_SPMVOP
 #if PDHCG_CUSPARSE_SPMVOP_HAS_ALG_PARAM
-    CUSPARSE_CHECK(cusparseSpMVOp_bufferSize(
-        sparse_handle,
-        CUSPARSE_OPERATION_NON_TRANSPOSE,
-        mat,
-        vec_x,
-        vec_y,
-        vec_y,
-        CUDA_R_64F,
-        CUSPARSE_SPMVOP_ALG_DEFAULT,
-        buffer_size));
+    CUSPARSE_CHECK(cusparseSpMVOp_bufferSize(sparse_handle,
+                                             CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                             mat,
+                                             vec_x,
+                                             vec_y,
+                                             vec_y,
+                                             CUDA_R_64F,
+                                             CUSPARSE_SPMVOP_ALG_DEFAULT,
+                                             buffer_size));
 #else
     CUSPARSE_CHECK(cusparseSpMVOp_bufferSize(
         sparse_handle, CUSPARSE_OPERATION_NON_TRANSPOSE, mat, vec_x, vec_y, vec_y, CUDA_R_64F, buffer_size));
@@ -116,16 +128,19 @@ static void pdhcg_spmv_prepare(cusparseHandle_t sparse_handle,
 #endif
 }
 
-extern "C" pdhcg_spmv_ctx_t *pdhcg_spmv_ctx_create(cusparseHandle_t sparse_handle,
+extern "C" pdhcg_spmv_ctx_t *pdhcg_spmv_ctx_create(pdhcg_device_sparse_t device_handle,
                                                    int num_rows,
                                                    int num_cols,
                                                    int num_nonzeros,
                                                    int *row_ptr,
                                                    int *col_ind,
                                                    double *val,
-                                                   cusparseDnVecDescr_t vec_x,
-                                                   cusparseDnVecDescr_t vec_y)
+                                                   pdhcg_device_vector_t device_x,
+                                                   pdhcg_device_vector_t device_y)
 {
+    auto sparse_handle = reinterpret_cast<cusparseHandle_t>(device_handle);
+    auto vec_x = reinterpret_cast<cusparseDnVecDescr_t>(device_x);
+    auto vec_y = reinterpret_cast<cusparseDnVecDescr_t>(device_y);
     pdhcg_spmv_ctx_t *ctx = (pdhcg_spmv_ctx_t *)safe_calloc(1, sizeof(pdhcg_spmv_ctx_t));
     ctx->vec_x = vec_x;
     ctx->vec_y = vec_y;
@@ -187,13 +202,14 @@ extern "C" void pdhcg_spmv_ctx_destroy(pdhcg_spmv_ctx_t *ctx)
     free(ctx);
 }
 
-extern "C" void pdhcg_spmv_execute(cusparseHandle_t sparse_handle,
+extern "C" void pdhcg_spmv_execute(pdhcg_device_sparse_t device_handle,
                                    pdhcg_spmv_ctx_t *ctx,
                                    const double *alpha,
                                    const double *beta,
                                    const double *x,
                                    double *y)
 {
+    auto sparse_handle = reinterpret_cast<cusparseHandle_t>(device_handle);
     (void)alpha;
     (void)x;
     if (ctx->num_nonzeros == 0)

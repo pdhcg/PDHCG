@@ -17,11 +17,7 @@ limitations under the License.
 
 #pragma once
 
-#include "cusparse_compat.h"
 #include "internal_types.h"
-#include <cublas_v2.h>
-#include <cuda_runtime.h>
-#include <cusparse.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -32,43 +28,20 @@ extern "C"
     static const double HOST_ONE = 1.0;
     static const double HOST_ZERO = 0.0;
 
-#define CUDA_CHECK(call)                                                                                               \
+#define DEVICE_CHECK(call)                                                                                             \
     do                                                                                                                 \
     {                                                                                                                  \
-        cudaError_t err = call;                                                                                        \
-        if (err != cudaSuccess)                                                                                        \
+        int status_ = (call);                                                                                          \
+        if (status_ != 0)                                                                                              \
         {                                                                                                              \
-            fprintf(stderr, "CUDA Error at %s:%d: %s\n", __FILE__, __LINE__, cudaGetErrorName(err));                   \
+            fprintf(stderr, "Device error at %s:%d (status %d)\n", __FILE__, __LINE__, status_);                       \
             exit(EXIT_FAILURE);                                                                                        \
         }                                                                                                              \
     } while (0)
 
-#define CUBLAS_CHECK(call)                                                                                             \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        cublasStatus_t status = call;                                                                                  \
-        if (status != CUBLAS_STATUS_SUCCESS)                                                                           \
-        {                                                                                                              \
-            fprintf(stderr, "cuBLAS Error at %s:%d: %s\n", __FILE__, __LINE__, cublasGetStatusName(status));           \
-            exit(EXIT_FAILURE);                                                                                        \
-        }                                                                                                              \
-    } while (0)
-
-#define CUSPARSE_CHECK(call)                                                                                           \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        cusparseStatus_t status = call;                                                                                \
-        if (status != CUSPARSE_STATUS_SUCCESS)                                                                         \
-        {                                                                                                              \
-            fprintf(stderr, "cuSPARSE Error at %s:%d: %s\n", __FILE__, __LINE__, cusparseGetErrorName(status));        \
-            exit(EXIT_FAILURE);                                                                                        \
-        }                                                                                                              \
-    } while (0)
-
-#define THREADS_PER_BLOCK 256
 #define ALLOC_AND_COPY(dest, src, bytes)                                                                               \
-    CUDA_CHECK(cudaMalloc(&dest, bytes));                                                                              \
-    CUDA_CHECK(cudaMemcpy(dest, src, bytes, cudaMemcpyHostToDevice));
+    DEVICE_CHECK(pdhcg_device_allocate((void **)&dest, bytes));                                                        \
+    DEVICE_CHECK(pdhcg_device_copy(dest, src, bytes, PDHCG_COPY_HOST_TO_DEVICE));
 
 #define ALLOC_AND_COPY_CSR(dest_csr, src_csr, n_rows, nnz)                                                             \
     do                                                                                                                 \
@@ -81,14 +54,12 @@ extern "C"
     } while (0)
 
 #define ALLOC_ZERO(dest, bytes)                                                                                        \
-    CUDA_CHECK(cudaMalloc(&dest, bytes));                                                                              \
-    CUDA_CHECK(cudaMemset(dest, 0, bytes));
+    DEVICE_CHECK(pdhcg_device_allocate((void **)&dest, bytes));                                                        \
+    DEVICE_CHECK(pdhcg_device_zero(dest, 0, bytes));
 
     extern const double HOST_ONE;
     extern const double HOST_ZERO;
 
-    double get_uniform_random();
-    double get_normal_random();
     void *safe_malloc(size_t size);
 
     void *safe_calloc(size_t num, size_t size);
@@ -129,8 +100,8 @@ extern "C"
 
     void set_default_parameters(pdhg_parameters_t *params);
 
-    double get_vector_sum(cublasHandle_t handle, int n, double *ones_d, const double *x_d);
-    double get_vector_inf_norm(cublasHandle_t handle, int n, const double *x_d);
+    double get_vector_sum(pdhcg_device_blas_t handle, int n, double *ones_d, const double *x_d);
+    double get_vector_inf_norm(pdhcg_device_blas_t handle, int n, const double *x_d);
 
     CsrComponent *deepcopy_csr_component(const CsrComponent *src, size_t num_rows, size_t nnz);
     quad_obj_type_t detect_q_type(const CsrComponent *sparse_component,

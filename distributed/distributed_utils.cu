@@ -14,6 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+#include "device/cuda/checks.h"
 #include "cone_utils.h"
 #include "distributed_types.h"
 #include "distributed_utils.h"
@@ -1202,24 +1203,24 @@ void distribute_data_bcast_then_partition(const qp_problem_t *working_problem,
     }
 }
 
-double compute_global_norm(cublasHandle_t blas_handle, int m_local, double *d_vec, MPI_Comm comm)
+double compute_global_norm(pdhcg_device_blas_t blas_handle, int m_local, double *d_vec, MPI_Comm comm)
 {
     double local_norm_sq = 0.0;
     double global_norm_sq = 0.0;
 
-    CUBLAS_CHECK(cublasDdot(blas_handle, m_local, d_vec, 1, d_vec, 1, &local_norm_sq));
+    DEVICE_CHECK(pdhcg_device_dot(blas_handle, m_local, d_vec, 1, d_vec, 1, &local_norm_sq));
 
     MPI_Allreduce(&local_norm_sq, &global_norm_sq, 1, MPI_DOUBLE, MPI_SUM, comm);
 
     return sqrt(global_norm_sq);
 }
 
-double compute_global_dot(cublasHandle_t blas_handle, int m_local, double *d_vec1, double *d_vec2, MPI_Comm comm)
+double compute_global_dot(pdhcg_device_blas_t blas_handle, int m_local, double *d_vec1, double *d_vec2, MPI_Comm comm)
 {
     double local_dot = 0.0;
     double global_dot = 0.0;
 
-    CUBLAS_CHECK(cublasDdot(blas_handle, m_local, d_vec1, 1, d_vec2, 1, &local_dot));
+    DEVICE_CHECK(pdhcg_device_dot(blas_handle, m_local, d_vec1, 1, d_vec2, 1, &local_dot));
     MPI_Allreduce(&local_dot, &global_dot, 1, MPI_DOUBLE, MPI_SUM, comm);
 
     return global_dot;

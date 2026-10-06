@@ -1,3 +1,19 @@
+/*
+Copyright 2026 Hongpei Li
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+        http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 #include "pdhcg.h"
 
 #include <stdio.h>
@@ -118,6 +134,13 @@ int main(void)
     CHECK(parameters.permute_block_size == 256);
     CHECK(pdhcg_validate_parameters(&parameters, error_message, sizeof(error_message)) == 0);
     CHECK(error_message[0] == '\0');
+    CHECK(parameters.num_threads == 0);
+    parameters.num_threads = -1;
+    CHECK(pdhcg_validate_parameters(&parameters, error_message, sizeof(error_message)) != 0);
+    CHECK(strstr(error_message, "num_threads") != NULL);
+    parameters.num_threads = 2;
+    CHECK(pdhcg_validate_parameters(&parameters, error_message, sizeof(error_message)) == 0);
+    parameters.num_threads = 0;
     parameters.non_diagonal_quadratic_mode = (non_diagonal_quadratic_mode_t)99;
     CHECK(pdhcg_validate_parameters(&parameters, error_message, sizeof(error_message)) != 0);
     parameters.non_diagonal_quadratic_mode = NON_DIAGONAL_QUADRATIC_INNER;

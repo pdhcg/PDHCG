@@ -14,6 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+#include "device/cuda/checks.h"
 #include "distributed_interface.h"
 #include "distributed_solver.h"
 #include "distributed_types.h"

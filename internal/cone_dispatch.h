@@ -23,7 +23,7 @@ extern "C"
 {
 #endif
 
-    void project_cone_runtime(pdhg_solver_state_t *state, cone_runtime_t *runtime, double *vector, double *warm_start);
+    void project_cone_runtime(pdhg_solver_state_t *state, cone_runtime_t *runtime, double *vector, double *workspace);
 
     void project_cone_runtime_diag_q(pdhg_solver_state_t *state, cone_runtime_t *runtime, double primal_step_size);
 

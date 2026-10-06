@@ -13,14 +13,17 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
+
+#include "device/cuda/checks.h"
 #include "distributed_interface.h"
 #include "distributed_solver.h"
 #include "distributed_types.h"
 #include "distributed_utils.h"
 #include "internal_types.h"
 #include "pdhcg.h"
-#include "pdhcg_kernels.h"
+#include "device_kernels.h"
 #include "pdhg_core_op.h"
+#include "infeasibility.h"
 #include "permute.h"
 #include "preconditioner.h"
 #include "presolve_wrapper.h"
@@ -170,7 +173,7 @@ pdhcg_result_t *create_result_from_state_distributed(pdhg_solver_state_t *state,
 
     if (state->problem_type == LP)
     {
-        compute_and_rescale_reduced_cost_kernel<<<state->num_blocks_primal, THREADS_PER_BLOCK>>>(
+        pdhcg_device_compute_and_rescale_reduced_cost(
             state->dual_slack,
             state->objective_vector,
             state->dual_product,
@@ -181,7 +184,7 @@ pdhcg_result_t *create_result_from_state_distributed(pdhg_solver_state_t *state,
     }
     else
     {
-        compute_and_rescale_reduced_cost_qp_kernel<<<state->num_blocks_primal, THREADS_PER_BLOCK>>>(
+        pdhcg_device_compute_and_rescale_reduced_cost_qp(
             state->dual_slack,
             state->objective_vector,
             state->quadratic_objective_term->primal_obj_product,
@@ -315,13 +318,13 @@ static pdhcg_result_t *distributed_optimize_core(const pdhg_parameters_t *params
         if ((state->is_this_major_iteration || state->total_count == 0) ||
             (state->total_count % get_print_frequency(state->total_count) == 0))
         {
-            compute_residual(state, params->optimality_norm);
-
-            if (!state->has_variable_cones && state->grid_context->global_num_affine_cones == 0 &&
-                state->is_this_major_iteration && state->total_count < 3 * params->termination_evaluation_frequency)
+            /* Conic residuals reuse the delta vectors, so consume the fixed-point
+               directions before evaluating ordinary optimality residuals. */
+            if (state->is_this_major_iteration)
             {
                 compute_infeasibility_information(state);
             }
+            compute_residual(state, params->optimality_norm);
 
             state->cumulative_time_sec = (double)(MPI_Wtime() - start_time);
 

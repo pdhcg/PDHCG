@@ -32,6 +32,7 @@ StatementMacros:
   - REQUIRE
   - ENSURE
   - EXPECT
+  - DEVICE_CHECK
   - CUDA_CHECK
   - CUBLAS_CHECK
   - CUSPARSE_CHECK

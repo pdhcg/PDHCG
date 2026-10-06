@@ -1,11 +1,12 @@
 /*
+Copyright 2025 Haihao Lu
 Copyright 2026 Hongpei Li
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+        http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,14 +17,8 @@ limitations under the License.
 
 #include "cone_kernel_ops.h"
 #include "cone_projection_utils.h"
-#include "pdhcg_exp_cone_kernels.h"
-#include "utils.h"
 
-#include <cuda_runtime.h>
-#include <float.h>
-#include <math.h>
-
-__device__ static inline void project_exp_cone_point(
+static inline void project_exp_cone_point(
     double r1, double r2, double r3, double d1, double d2, double d3, double *xo, double *yo, double *zo)
 {
     const double E_CONST = 2.718281828459045;
@@ -130,8 +125,7 @@ __device__ static inline void project_exp_cone_point(
     *zo = d3 * u3;
 }
 
-/* y-fixed cross-section of D K_exp: weighted 1D Newton-bisection on u = exp((rz/d_r)/y_eff). */
-__device__ static inline void project_2d_exp_persp(
+static inline void project_2d_exp_persp(
     double rz0, double ry, double rt0, double d_r, double d_y, double d_t, double *warm_start, double *rzo, double *rto)
 {
     if (d_r <= 0.0 || d_y <= 0.0 || d_t <= 0.0)
@@ -230,7 +224,7 @@ __device__ static inline void project_2d_exp_persp(
     *rto = d_t * y_eff * u;
 }
 
-__device__ static inline double exp_cone_boundary(double x, double y)
+static inline double exp_cone_boundary(double x, double y)
 {
     if (!(y > 0.0))
         return x <= 0.0 ? 0.0 : INFINITY;
@@ -243,7 +237,7 @@ __device__ static inline double exp_cone_boundary(double x, double y)
     return exp(log_value);
 }
 
-__device__ static inline bool exp_cone_contains_point(double x, double y, double z)
+static inline bool exp_cone_contains_point(double x, double y, double z)
 {
     if (y > 0.0 && z > 0.0)
     {
@@ -255,7 +249,7 @@ __device__ static inline bool exp_cone_contains_point(double x, double y, double
     return y == 0.0 && x <= 0.0 && z >= 0.0;
 }
 
-__device__ static inline double
+static inline double
 exp_fixed_x_objective(double y, double x, double input_y, double input_z, double weight_y, double weight_z)
 {
     double z = exp_cone_boundary(x, y);
@@ -266,7 +260,7 @@ exp_fixed_x_objective(double y, double x, double input_y, double input_z, double
     return weight_y * dy * dy + weight_z * dz * dz;
 }
 
-__device__ static inline double
+static inline double
 exp_fixed_z_objective(double y, double z, double input_x, double input_y, double weight_x, double weight_y)
 {
     double x = y > 0.0 ? y * (log(z) - log(y)) : 0.0;
@@ -275,20 +269,20 @@ exp_fixed_z_objective(double y, double z, double input_x, double input_y, double
     return weight_x * dx * dx + weight_y * dy * dy;
 }
 
-__device__ static inline double exp_xz_log_violation(double y, double x, double z)
+static inline double exp_xz_log_violation(double y, double x, double z)
 {
     if (!(y > 0.0) || !(z > 0.0))
         return x <= 0.0 ? -INFINITY : INFINITY;
     return log(y) + x / y - log(z);
 }
 
-__device__ static inline void project_exp_cone_section(double *point,
-                                                       const double *rescaling,
-                                                       const double *q_diag,
-                                                       double tau,
-                                                       double *warm_start,
-                                                       int start,
-                                                       const char *is_fixed)
+static inline void project_exp_cone_section(double *point,
+                                            const double *rescaling,
+                                            const double *q_diag,
+                                            double tau,
+                                            double *warm_start,
+                                            int start,
+                                            const char *is_fixed)
 {
     bool fixed_x = is_fixed[start + 0] != 0;
     bool fixed_y = is_fixed[start + 1] != 0;
@@ -523,247 +517,177 @@ __device__ static inline void project_exp_cone_section(double *point,
         point[start + 2] = output_z * rescaling[start + 2];
 }
 
-__global__ void project_exp_cone_kernel(double *__restrict__ primal_solution,
-                                        const double *__restrict__ variable_rescaling,
-                                        double *__restrict__ warm_start,
-                                        const int *__restrict__ start_idx,
-                                        const int *__restrict__ v_dim,
-                                        const char *__restrict__ is_fixed,
-                                        int num_blocks)
+static void exp_project(double *__restrict__ primal_solution,
+                        const double *__restrict__ variable_rescaling,
+                        double *__restrict__ workspace,
+                        const int *__restrict__ start_idx,
+                        const int *__restrict__ v_dim,
+                        const double *__restrict__ power_alpha,
+                        const char *__restrict__ is_fixed,
+                        int num_blocks)
 {
     (void)v_dim;
-    int blk = blockIdx.x * blockDim.x + threadIdx.x;
-    if (blk >= num_blocks)
-        return;
-
-    int s_idx = start_idx[blk];
-    double r1 = primal_solution[s_idx + 0];
-    double r2 = primal_solution[s_idx + 1];
-    double r3 = primal_solution[s_idx + 2];
-
-    double d1 = variable_rescaling[s_idx + 0];
-    double d2 = variable_rescaling[s_idx + 1];
-    double d3 = variable_rescaling[s_idx + 2];
-
-    if (cone_section_has_fixed(is_fixed, s_idx, 3))
+    (void)power_alpha;
+#pragma omp parallel for schedule(static) if (num_blocks >= 16)
+    for (int blk = 0; blk < num_blocks; ++blk)
     {
-        project_exp_cone_section(primal_solution, variable_rescaling, NULL, 0.0, warm_start + blk, s_idx, is_fixed);
-        return;
+        int s_idx = start_idx[blk];
+        double r1 = primal_solution[s_idx + 0];
+        double r2 = primal_solution[s_idx + 1];
+        double r3 = primal_solution[s_idx + 2];
+
+        double d1 = variable_rescaling[s_idx + 0];
+        double d2 = variable_rescaling[s_idx + 1];
+        double d3 = variable_rescaling[s_idx + 2];
+
+        if (cone_section_has_fixed(is_fixed, s_idx, 3))
+        {
+            project_exp_cone_section(primal_solution, variable_rescaling, NULL, 0.0, workspace + blk, s_idx, is_fixed);
+            continue;
+        }
+
+        double xo, yo, zo;
+        project_exp_cone_point(r1, r2, r3, d1, d2, d3, &xo, &yo, &zo);
+
+        primal_solution[s_idx + 0] = xo;
+        primal_solution[s_idx + 1] = yo;
+        primal_solution[s_idx + 2] = zo;
     }
-
-    double xo, yo, zo;
-    project_exp_cone_point(r1, r2, r3, d1, d2, d3, &xo, &yo, &zo);
-
-    primal_solution[s_idx + 0] = xo;
-    primal_solution[s_idx + 1] = yo;
-    primal_solution[s_idx + 2] = zo;
 }
 
-__global__ void compute_cone_dual_residual_exp_kernel(double *__restrict__ dual_residual,
-                                                      double *__restrict__ complementarity_residual,
-                                                      const double *__restrict__ objective_vector,
-                                                      const double *__restrict__ dual_product,
-                                                      const double *__restrict__ variable_rescaling,
-                                                      const double *__restrict__ primal_solution,
-                                                      double *__restrict__ warm_start,
-                                                      const int *__restrict__ start_idx,
-                                                      const int *__restrict__ v_dim,
-                                                      const char *__restrict__ is_fixed,
-                                                      int num_blocks)
+static void exp_diag(double *__restrict__ pdhg_primal,
+                     double *__restrict__ reflected_primal,
+                     const double *__restrict__ current_primal,
+                     const double *__restrict__ variable_rescaling,
+                     const double *__restrict__ Q_diag,
+                     double tau,
+                     double *__restrict__ workspace,
+                     const int *__restrict__ start_idx,
+                     const int *__restrict__ v_dim,
+                     const double *__restrict__ power_alpha,
+                     const char *__restrict__ is_fixed,
+                     int num_blocks)
 {
     (void)v_dim;
-    int blk = blockIdx.x * blockDim.x + threadIdx.x;
-    if (blk >= num_blocks)
-        return;
-
-    int s_idx = start_idx[blk];
-    double r1 = objective_vector[s_idx + 0] - dual_product[s_idx + 0];
-    double r2 = objective_vector[s_idx + 1] - dual_product[s_idx + 1];
-    double r3 = objective_vector[s_idx + 2] - dual_product[s_idx + 2];
-
-    if (cone_section_has_fixed(is_fixed, s_idx, 3))
+    (void)power_alpha;
+#pragma omp parallel for schedule(static) if (num_blocks >= 16)
+    for (int blk = 0; blk < num_blocks; ++blk)
     {
-        const double residual[3] = {r1, r2, r3};
-        for (int slot = 0; slot < 3; ++slot)
+        int s_idx = start_idx[blk];
+
+        if (cone_section_has_fixed(is_fixed, s_idx, 3))
         {
-            int index = s_idx + slot;
-            dual_residual[index] = is_fixed[index] ? primal_solution[index] : primal_solution[index] - residual[slot];
+            project_exp_cone_section(pdhg_primal, variable_rescaling, Q_diag, tau, workspace + blk, s_idx, is_fixed);
+            for (int slot = 0; slot < 3; ++slot)
+            {
+                int index = s_idx + slot;
+                reflected_primal[index] = 2.0 * pdhg_primal[index] - current_primal[index];
+            }
+            continue;
         }
-        project_exp_cone_section(dual_residual, variable_rescaling, NULL, 0.0, warm_start + blk, s_idx, is_fixed);
-        for (int slot = 0; slot < 3; ++slot)
-        {
-            int index = s_idx + slot;
-            dual_residual[index] =
-                is_fixed[index] ? 0.0 : (primal_solution[index] - dual_residual[index]) * variable_rescaling[index];
-        }
-        complementarity_residual[blk] = 0.0;
-        return;
+
+        double r1 = pdhg_primal[s_idx + 0];
+        double r2 = pdhg_primal[s_idx + 1];
+        double r3 = pdhg_primal[s_idx + 2];
+
+        double d1 = variable_rescaling[s_idx + 0];
+        double d2 = variable_rescaling[s_idx + 1];
+        double d3 = variable_rescaling[s_idx + 2];
+
+        double w1 = 1.0 + tau * Q_diag[s_idx + 0];
+        double w2 = 1.0 + tau * Q_diag[s_idx + 1];
+        double w3 = 1.0 + tau * Q_diag[s_idx + 2];
+
+        /* Clamp guards against negative drift in Q_diag invalidating sqrt(w_i). */
+        if (!(w1 > 0.0))
+            w1 = 1.0;
+        if (!(w2 > 0.0))
+            w2 = 1.0;
+        if (!(w3 > 0.0))
+            w3 = 1.0;
+
+        double sw1 = sqrt(w1);
+        double sw2 = sqrt(w2);
+        double sw3 = sqrt(w3);
+
+        double e1 = sw1 * d1;
+        double e2 = sw2 * d2;
+        double e3 = sw3 * d3;
+
+        double u1 = sw1 * r1;
+        double u2 = sw2 * r2;
+        double u3 = sw3 * r3;
+        double y1_out, y2_out, y3_out;
+        project_exp_cone_point(u1, u2, u3, e1, e2, e3, &y1_out, &y2_out, &y3_out);
+        double x1 = y1_out / sw1;
+        double x2 = y2_out / sw2;
+        double x3 = y3_out / sw3;
+
+        pdhg_primal[s_idx + 0] = x1;
+        pdhg_primal[s_idx + 1] = x2;
+        pdhg_primal[s_idx + 2] = x3;
+
+        reflected_primal[s_idx + 0] = 2.0 * x1 - current_primal[s_idx + 0];
+        reflected_primal[s_idx + 1] = 2.0 * x2 - current_primal[s_idx + 1];
+        reflected_primal[s_idx + 2] = 2.0 * x3 - current_primal[s_idx + 2];
     }
-
-    double d1 = 1.0 / variable_rescaling[s_idx + 0];
-    double d2 = 1.0 / variable_rescaling[s_idx + 1];
-    double d3 = 1.0 / variable_rescaling[s_idx + 2];
-
-    /* Moreau: dist(r, K_exp^*) = ||-proj_{K_exp}(-r)|| with inverse-scaled d. */
-    double xo, yo, zo;
-    project_exp_cone_point(-r1, -r2, -r3, d1, d2, d3, &xo, &yo, &zo);
-
-    dual_residual[s_idx + 0] = -xo * variable_rescaling[s_idx + 0];
-    dual_residual[s_idx + 1] = -yo * variable_rescaling[s_idx + 1];
-    dual_residual[s_idx + 2] = -zo * variable_rescaling[s_idx + 2];
 }
 
-/* 3-dim alpha-power cone K_a = {(x,y,z) : x >= 0, y >= 0, x^a * y^(1-a) >= |z|}.
-   Weighted projection: solves
-     min_{(x,y,z) in K_a}  0.5 * ( wx*(x-rx)^2 + wy*(y-ry)^2 + wz*(z-rz)^2 )
-   with wi > 0. In-cone test is metric-independent; opposite-cone test is not.
-   Bisection on rho = |z_proj| in [0, |r_z|] using KKT-derived formulas
-     x(rho) = 0.5 (rx + sqrt(rx^2 + 4 a (wz/wx) rho (|rz|-rho)))
-     y(rho) = 0.5 (ry + sqrt(ry^2 + 4 (1-a) (wz/wy) rho (|rz|-rho)))
-     G(rho) = x^a y^(1-a) - rho. */
-__global__ void project_exp_cone_diag_q_kernel(double *__restrict__ pdhg_primal,
-                                               double *__restrict__ reflected_primal,
-                                               const double *__restrict__ current_primal,
-                                               const double *__restrict__ variable_rescaling,
-                                               const double *__restrict__ Q_diag,
-                                               double tau,
-                                               double *__restrict__ warm_start,
-                                               const int *__restrict__ start_idx,
-                                               const int *__restrict__ v_dim,
-                                               const char *__restrict__ is_fixed,
-                                               int num_blocks)
+static void exp_residual(double *__restrict__ dual_residual,
+                         double *__restrict__ complementarity_residual,
+                         const double *__restrict__ objective_vector,
+                         const double *__restrict__ dual_product,
+                         const double *__restrict__ variable_rescaling,
+                         const double *__restrict__ primal_solution,
+                         double *__restrict__ workspace,
+                         const int *__restrict__ start_idx,
+                         const int *__restrict__ v_dim,
+                         const double *__restrict__ power_alpha,
+                         const char *__restrict__ is_fixed,
+                         int num_blocks)
 {
     (void)v_dim;
-    int blk = blockIdx.x * blockDim.x + threadIdx.x;
-    if (blk >= num_blocks)
-        return;
-
-    int s_idx = start_idx[blk];
-
-    if (cone_section_has_fixed(is_fixed, s_idx, 3))
+    (void)power_alpha;
+#pragma omp parallel for schedule(static) if (num_blocks >= 16)
+    for (int blk = 0; blk < num_blocks; ++blk)
     {
-        project_exp_cone_section(pdhg_primal, variable_rescaling, Q_diag, tau, warm_start + blk, s_idx, is_fixed);
-        for (int slot = 0; slot < 3; ++slot)
+        int s_idx = start_idx[blk];
+        double r1 = objective_vector[s_idx + 0] - dual_product[s_idx + 0];
+        double r2 = objective_vector[s_idx + 1] - dual_product[s_idx + 1];
+        double r3 = objective_vector[s_idx + 2] - dual_product[s_idx + 2];
+
+        if (cone_section_has_fixed(is_fixed, s_idx, 3))
         {
-            int index = s_idx + slot;
-            reflected_primal[index] = 2.0 * pdhg_primal[index] - current_primal[index];
+            const double residual[3] = {r1, r2, r3};
+            for (int slot = 0; slot < 3; ++slot)
+            {
+                int index = s_idx + slot;
+                dual_residual[index] =
+                    is_fixed[index] ? primal_solution[index] : primal_solution[index] - residual[slot];
+            }
+            project_exp_cone_section(dual_residual, variable_rescaling, NULL, 0.0, workspace + blk, s_idx, is_fixed);
+            for (int slot = 0; slot < 3; ++slot)
+            {
+                int index = s_idx + slot;
+                dual_residual[index] =
+                    is_fixed[index] ? 0.0 : (primal_solution[index] - dual_residual[index]) * variable_rescaling[index];
+            }
+            complementarity_residual[blk] = 0.0;
+            continue;
         }
-        return;
+
+        double d1 = 1.0 / variable_rescaling[s_idx + 0];
+        double d2 = 1.0 / variable_rescaling[s_idx + 1];
+        double d3 = 1.0 / variable_rescaling[s_idx + 2];
+
+        /* Moreau: dist(r, K_exp^*) = ||-proj_{K_exp}(-r)|| with inverse-scaled d. */
+        double xo, yo, zo;
+        project_exp_cone_point(-r1, -r2, -r3, d1, d2, d3, &xo, &yo, &zo);
+
+        dual_residual[s_idx + 0] = -xo * variable_rescaling[s_idx + 0];
+        dual_residual[s_idx + 1] = -yo * variable_rescaling[s_idx + 1];
+        dual_residual[s_idx + 2] = -zo * variable_rescaling[s_idx + 2];
     }
-
-    double r1 = pdhg_primal[s_idx + 0];
-    double r2 = pdhg_primal[s_idx + 1];
-    double r3 = pdhg_primal[s_idx + 2];
-
-    double d1 = variable_rescaling[s_idx + 0];
-    double d2 = variable_rescaling[s_idx + 1];
-    double d3 = variable_rescaling[s_idx + 2];
-
-    double w1 = 1.0 + tau * Q_diag[s_idx + 0];
-    double w2 = 1.0 + tau * Q_diag[s_idx + 1];
-    double w3 = 1.0 + tau * Q_diag[s_idx + 2];
-
-    /* Clamp guards against negative drift in Q_diag invalidating sqrt(w_i). */
-    if (!(w1 > 0.0))
-        w1 = 1.0;
-    if (!(w2 > 0.0))
-        w2 = 1.0;
-    if (!(w3 > 0.0))
-        w3 = 1.0;
-
-    double sw1 = sqrt(w1);
-    double sw2 = sqrt(w2);
-    double sw3 = sqrt(w3);
-
-    double e1 = sw1 * d1;
-    double e2 = sw2 * d2;
-    double e3 = sw3 * d3;
-
-    double u1 = sw1 * r1;
-    double u2 = sw2 * r2;
-    double u3 = sw3 * r3;
-    double y1_out, y2_out, y3_out;
-    project_exp_cone_point(u1, u2, u3, e1, e2, e3, &y1_out, &y2_out, &y3_out);
-    double x1 = y1_out / sw1;
-    double x2 = y2_out / sw2;
-    double x3 = y3_out / sw3;
-
-    pdhg_primal[s_idx + 0] = x1;
-    pdhg_primal[s_idx + 1] = x2;
-    pdhg_primal[s_idx + 2] = x3;
-
-    reflected_primal[s_idx + 0] = 2.0 * x1 - current_primal[s_idx + 0];
-    reflected_primal[s_idx + 1] = 2.0 * x2 - current_primal[s_idx + 1];
-    reflected_primal[s_idx + 2] = 2.0 * x3 - current_primal[s_idx + 2];
 }
 
-/* Direct (s,t) bisection in zeta = xi/sqrt(w_s w_t); alpha = sqrt(w_t/w_s) carries asymmetry. */
-
-static void launch_exp_thread_proj(
-    double *p, const double *vr, double *ws, const int *si, const int *vd, const double *pa, const char *isf, int n)
-{
-    (void)pa;
-    int t = THREADS_PER_BLOCK;
-    int b = (n + t - 1) / t;
-    project_exp_cone_kernel<<<b, t>>>(p, vr, ws, si, vd, isf, n);
-}
-static void launch_exp_thread_dual(double *dr,
-                                   double *cr,
-                                   const double *obj,
-                                   const double *dp,
-                                   const double *vr,
-                                   const double *ps,
-                                   double *ws,
-                                   const int *si,
-                                   const int *vd,
-                                   const double *pa,
-                                   const char *isf,
-                                   int n)
-{
-    (void)pa;
-    int t = THREADS_PER_BLOCK;
-    int b = (n + t - 1) / t;
-    compute_cone_dual_residual_exp_kernel<<<b, t>>>(dr, cr, obj, dp, vr, ps, ws, si, vd, isf, n);
-}
-static void launch_exp_thread_proj_diag_q(double *pp,
-                                          double *rp,
-                                          const double *cp,
-                                          const double *vr,
-                                          const double *qd,
-                                          double tau,
-                                          double *ws,
-                                          const int *si,
-                                          const int *vd,
-                                          const double *pa,
-                                          const char *isf,
-                                          int n)
-{
-    (void)pa;
-    int t = THREADS_PER_BLOCK;
-    int b = (n + t - 1) / t;
-    project_exp_cone_diag_q_kernel<<<b, t>>>(pp, rp, cp, vr, qd, tau, ws, si, vd, isf, n);
-}
-
-extern const cone_kernel_ops_t pdhcg_exp_cone_kernel_ops = {
-    {
-        launch_exp_thread_proj,
-        NULL,
-        NULL,
-        NULL,
-        NULL,
-    },
-    {
-        launch_exp_thread_proj_diag_q,
-        NULL,
-        NULL,
-        NULL,
-        NULL,
-    },
-    {
-        launch_exp_thread_dual,
-        NULL,
-        NULL,
-        NULL,
-        NULL,
-    },
-};
+const cone_kernel_ops_t pdhcg_exp_cone_kernel_ops = {{exp_project}, {exp_diag}, {exp_residual}};

@@ -20,7 +20,7 @@ limitations under the License.
 #include "pdhcg.h"
 #include "presolve_wrapper.h"
 #include "utils.h"
-#include <cuda_runtime.h>
+#include "device_general_op.h"
 #include <getopt.h>
 #include <libgen.h>
 #include <stdbool.h>
@@ -32,6 +32,13 @@ limitations under the License.
 #ifdef PDHCG_COMPILE_DISTRIBUTED
 #include <mpi.h>
 #endif
+
+static void print_devices(void)
+{
+    printf("Built devices: %s\n", PDHCG_BUILT_DEVICES);
+    printf("Default device: %s\n", PDHCG_DEFAULT_DEVICE_NAME);
+    printf("Executable device: %s\n", pdhcg_device_name());
+}
 
 char *get_output_path(const char *output_dir, const char *instance_name, const char *suffix)
 {
@@ -164,12 +171,14 @@ void print_usage(const char *prog_name)
 
     fprintf(stderr, "Options:\n");
     fprintf(stderr, "  -h, --help               Display this help message.\n");
+    fprintf(stderr, "      --list-devices       Print build/default/executable devices and exit (standalone).\n");
     fprintf(stderr, "  -v, --verbose <int>      Verbosity level: 0=silent, 1=summary, 2=detailed (default: 1).\n");
     fprintf(stderr, "      --time_limit <sec>   Time limit in seconds (default: 3600.0).\n");
     fprintf(stderr, "      --iter_limit <int>   Iteration limit (default: %d).\n", INT32_MAX);
+    fprintf(stderr, "      --threads <int>      CPU OpenMP threads including caller; 0=runtime default (CUDA ignores).\n");
     fprintf(stderr, "      --eps_opt <float>    Relative optimality tolerance (default: 1e-4).\n");
     fprintf(stderr, "      --eps_feas <float>   Relative feasibility tolerance (default: 1e-4).\n");
-    fprintf(stderr, "      --eps_infeas_detect  Infeasibility detection tolerance (default: 1e-12).\n");
+    fprintf(stderr, "      --eps_infeasible <float> Infeasibility certificate tolerance (default: 1e-10).\n");
     fprintf(stderr, "      --curtis_reid_iter   Iterations for Curtis-Reid scaling (default: 0, disabled).\n");
     fprintf(stderr, "      --l_inf_ruiz_iter    Iterations for L-inf Ruiz rescaling (default: 10).\n");
     fprintf(stderr, "      --no_pock_chambolle  Disable Pock-Chambolle rescaling (default: enabled).\n");
@@ -205,7 +214,7 @@ void print_usage(const char *prog_name)
 
 int run_pdhcg(int argc, char *argv[])
 {
-    cudaFree(0);
+    pdhcg_device_initialize();
     pdhg_parameters_t params;
     set_default_parameters(&params);
 
@@ -215,7 +224,7 @@ int run_pdhcg(int argc, char *argv[])
                                            {"iter_limit", required_argument, 0, 1002},
                                            {"eps_opt", required_argument, 0, 1003},
                                            {"eps_feas", required_argument, 0, 1004},
-                                           {"eps_infeas_detect", required_argument, 0, 1005},
+                                           {"eps_infeasible", required_argument, 0, 1005},
                                            {"eps_feas_polish", required_argument, 0, 1006},
                                            {"feasibility_polishing", no_argument, 0, 'f'},
                                            {"l_inf_ruiz_iter", required_argument, 0, 1007},
@@ -238,6 +247,7 @@ int run_pdhcg(int argc, char *argv[])
                                            {"necessary_reduction_for_restart", required_argument, 0, 1024},
                                            {"curtis_reid_iter", required_argument, 0, 1025},
                                            {"non_diagonal_quadratic_mode", required_argument, 0, 1026},
+                                           {"threads", required_argument, 0, 1027},
                                            {0, 0, 0, 0}};
 
     int opt;
@@ -346,6 +356,9 @@ int run_pdhcg(int argc, char *argv[])
             case 1025:
                 params.curtis_reid_iterations = atoi(optarg);
                 break;
+            case 1027:
+                params.num_threads = atoi(optarg);
+                break;
             case 1026:
                 if (strcmp(optarg, "inner") == 0)
                     params.non_diagonal_quadratic_mode = NON_DIAGONAL_QUADRATIC_INNER;
@@ -366,6 +379,13 @@ int run_pdhcg(int argc, char *argv[])
     {
         fprintf(stderr, "Error: You must specify an input file and an output directory.\n\n");
         print_usage(argv[0]);
+        return 1;
+    }
+
+    char parameter_message[256];
+    if (pdhcg_validate_parameters(&params, parameter_message, sizeof(parameter_message)) != 0)
+    {
+        fprintf(stderr, "Error: %s\n", parameter_message);
         return 1;
     }
 
@@ -433,7 +453,7 @@ int run_d_pdhcg(int argc, char *argv[])
                                            {"iter_limit", required_argument, 0, 1002},
                                            {"eps_opt", required_argument, 0, 1003},
                                            {"eps_feas", required_argument, 0, 1004},
-                                           {"eps_infeas_detect", required_argument, 0, 1005},
+                                           {"eps_infeasible", required_argument, 0, 1005},
                                            {"eps_feas_polish", required_argument, 0, 1006},
                                            {"feasibility_polishing", no_argument, 0, 'f'},
                                            {"l_inf_ruiz_iter", required_argument, 0, 1007},
@@ -455,6 +475,7 @@ int run_d_pdhcg(int argc, char *argv[])
                                            {"necessary_reduction_for_restart", required_argument, 0, 1024},
                                            {"curtis_reid_iter", required_argument, 0, 1025},
                                            {"non_diagonal_quadratic_mode", required_argument, 0, 1026},
+                                           {"threads", required_argument, 0, 1027},
                                            {"grid_size", required_argument, 0, 2001},
                                            {"partition_method", required_argument, 0, 2002},
                                            {"permute_method", required_argument, 0, 2003},
@@ -559,6 +580,9 @@ int run_d_pdhcg(int argc, char *argv[])
             case 1025:
                 params.curtis_reid_iterations = atoi(optarg);
                 break;
+            case 1027:
+                params.num_threads = atoi(optarg);
+                break;
             case 1026:
                 if (strcmp(optarg, "inner") == 0)
                     params.non_diagonal_quadratic_mode = NON_DIAGONAL_QUADRATIC_INNER;
@@ -656,6 +680,15 @@ int run_d_pdhcg(int argc, char *argv[])
         return 1;
     }
 
+    char parameter_message[256];
+    if (pdhcg_validate_parameters(&params, parameter_message, sizeof(parameter_message)) != 0)
+    {
+        if (rank_global == 0)
+            fprintf(stderr, "Error: %s\n", parameter_message);
+        MPI_Finalize();
+        return 1;
+    }
+
     const char *filename = argv[optind];
     const char *output_dir = argv[optind + 1];
 
@@ -718,6 +751,17 @@ int run_d_pdhcg(int argc, char *argv[])
 
 int main(int argc, char *argv[])
 {
+    /* Build metadata needs neither an input file nor CUDA/MPI initialization. */
+    if (argc > 1 && strcmp(argv[1], "--list-devices") == 0)
+    {
+        if (argc != 2)
+        {
+            fprintf(stderr, "Error: --list-devices must be used by itself.\n");
+            return EXIT_FAILURE;
+        }
+        print_devices();
+        return EXIT_SUCCESS;
+    }
 #ifdef PDHCG_COMPILE_DISTRIBUTED
     int mpi_initialized = 0;
     MPI_Initialized(&mpi_initialized);

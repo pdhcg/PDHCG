@@ -22,6 +22,12 @@ void initialize_split_cones(pdhg_solver_state_t *state, const rescale_info_t *re
     (void)rescale_info;
 }
 
+void initialize_split_cone_infeasibility_type(const pdhg_solver_state_t *state, unsigned char *host_type)
+{
+    (void)state;
+    (void)host_type;
+}
+
 void free_split_cones(pdhg_solver_state_t *state)
 {
     (void)state;

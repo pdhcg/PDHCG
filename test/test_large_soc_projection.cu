@@ -14,6 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+#include "device/cuda/checks.h"
 #include "internal_types.h"
 #include "pdhcg_soc_cone_kernels.h"
 #include "utils.h"

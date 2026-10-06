@@ -14,6 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+#include "../checks.h"
 #include "pdhcg_psd_cone.h"
 #include "utils.h"
 

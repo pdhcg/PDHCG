@@ -30,14 +30,18 @@ PDHCG solves convex quadratic conic programs in the following form, with a spars
 - Standard SOC, Rotated SOC, Exponential, Power, and positive-semidefinite (PSD) cones are supported both on variable blocks and through native affine constraints $Fx + g \in \mathcal{K}_a$.
 
 
-## Installation (C++ Executable)
+## Installation (Native Library / Executable)
 
-To use the standalone C++ solver, you must compile the project using CMake.
+To use the standalone solver, compile the project using CMake.
 
 ### Requirements
-* **GPU:** NVIDIA GPU with CUDA 12.4+.
-* **Build Tools:** CMake (≥ 3.20), GCC, NVCC.
-* **Distributed (Optional):** MPI (e.g., OpenMPI) and NCCL for multi-GPU support.
+
+| Component | Requirements |
+| --- | --- |
+| Build | CMake ≥ 3.20, C99 compiler, zlib |
+| CPU backend | OpenMP, LP64 BLAS/LAPACK |
+| CUDA backend | CUDA Toolkit ≥ 12.4 with NVCC; compatible NVIDIA GPU to run |
+| Multi-GPU (optional) | MPI, NCCL, C++17 compiler |
 
 ### Build from Source
 Clone the repository and compile the project using CMake.
@@ -48,6 +52,7 @@ cmake -S . -B build
 cmake --build build --clean-first
 ```
 This will create the solver binary at `./build/pdhcg`.
+CMake automatically builds the CPU/CUDA backends with available dependencies; use `-DPDHCG_DEVICES=CPU` for CPU only. See the [installation guide](docs/installation.md).
 
 If your system has multiple CUDA versions or the default nvcc is outdated (e.g., in `/usr/bin/nvcc`), you should explicitly specify the path to your modern CUDA compiler using the CUDACXX environment variable.
 ```bash
@@ -69,7 +74,7 @@ cmake --build build --clean-first
 
 This requires MPI and NCCL to be installed on your system.
 
-##  Usage (C++ Executable)
+## Usage (Native Executable)
 
 Run the solver from the command line:
 
@@ -93,7 +98,7 @@ Solver Parameters:
 | --iter_limit | int | Iteration limit. | 2147483647 |
 | --eps_opt | double | Relative optimality tolerance. | 1e-4 |
 | --eps_feas | double | Relative feasibility tolerance. | 1e-4 |
-| --eps_infeas_detect | double | Infeasibility detection tolerance. | 1e-12 |
+| --eps_infeasible | double | Infeasibility certificate tolerance. | 1e-10 |
 | --curtis_reid_iter | int | Iterations for Curtis-Reid log-domain matrix scaling; 0 disables it. | 0 |
 | --l_inf_ruiz_iter | int | Iterations for L-inf Ruiz rescaling. | 10 |
 | --pock_chambolle_alpha | double | Value for Pock-Chambolle step size parameter $\alpha$. | 1.0 |
@@ -215,7 +220,7 @@ m = Model(objective_matrix=Q,
 m.setParams(LogLevel=2)
 
 # Solve
-m.optimize()
+m.optimize()  # Use device="cpu" or device="cuda" to select a backend.
 
 # Print results
 print(f"Status: {m.Status}")

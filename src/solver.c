@@ -15,22 +15,41 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+#include "solver.h"
 #include "internal_types.h"
 #include "pdhcg.h"
 #include "pdhg_core_op.h"
+#include "infeasibility.h"
 #include "preconditioner.h"
 #include "presolve_wrapper.h"
 #include "qcqp_transform.h"
-#include "solver.h"
 #include "solver_state.h"
 #include "utils.h"
-#include <chrono>
-#include <cublas_v2.h>
-#include <cuda_runtime.h>
-#include <cusparse.h>
+#include <time.h>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 #include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
+
+static double monotonic_time_seconds(void)
+{
+#ifdef _WIN32
+    LARGE_INTEGER counter, frequency;
+    QueryPerformanceFrequency(&frequency);
+    QueryPerformanceCounter(&counter);
+    return (double)counter.QuadPart / (double)frequency.QuadPart;
+#else
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
+    {
+        perror("clock_gettime");
+        exit(EXIT_FAILURE);
+    }
+    return (double)now.tv_sec + (double)now.tv_nsec * 1e-9;
+#endif
+}
 
 pdhcg_result_t *optimize(const pdhg_parameters_t *input_params, const qp_problem_t *original_problem)
 {
@@ -115,7 +134,7 @@ pdhcg_result_t *optimize(const pdhg_parameters_t *input_params, const qp_problem
 
     rescale_info_free(rescale_info);
     initialize_step_size_and_primal_weight(state, params);
-    const auto start_time = std::chrono::steady_clock::now();
+    const double start_time = monotonic_time_seconds();
     bool do_restart = false;
 
     while (state->total_count < params->termination_criteria.iteration_limit)
@@ -123,15 +142,15 @@ pdhcg_result_t *optimize(const pdhg_parameters_t *input_params, const qp_problem
         if ((state->is_this_major_iteration || state->total_count == 0) ||
             (state->total_count % get_print_frequency(state->total_count) == 0))
         {
-            compute_residual(state, params->optimality_norm);
-            if (!state->has_variable_cones && state->affine_cones.num_blocks == 0 && state->is_this_major_iteration &&
-                state->total_count < 3 * params->termination_evaluation_frequency)
+            /* Conic residuals reuse the delta vectors, so consume the fixed-point
+               directions before evaluating ordinary optimality residuals. */
+            if (state->is_this_major_iteration)
             {
                 compute_infeasibility_information(state);
             }
+            compute_residual(state, params->optimality_norm);
 
-            state->cumulative_time_sec =
-                std::chrono::duration<double>(std::chrono::steady_clock::now() - start_time).count();
+            state->cumulative_time_sec = monotonic_time_seconds() - start_time;
 
             check_termination_criteria(state, &params->termination_criteria);
             display_iteration_stats(state, params->verbose);
@@ -205,6 +224,6 @@ pdhcg_result_t *optimize(const pdhg_parameters_t *input_params, const qp_problem
     {
         qp_problem_free(transformed);
     }
-    CUDA_CHECK(cudaGetLastError());
+    DEVICE_CHECK(pdhcg_device_last_error());
     return result;
 }

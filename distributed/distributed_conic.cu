@@ -14,6 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+#include "device/cuda/checks.h"
 #include "distributed_conic.h"
 #include "distributed_interface.h"
 #include "distributed_types.h"
@@ -844,6 +845,22 @@ void initialize_split_cones(pdhg_solver_state_t *state, const rescale_info_t *re
         state, affine_partition, rescale_info->con_rescale, state->grid_context->comm_col, "affine");
 }
 
+void initialize_split_cone_infeasibility_type(const pdhg_solver_state_t *state, unsigned char *host_type)
+{
+    if (!state->grid_context || !host_type)
+        return;
+
+    const distributed_cone_partition_t *partition = &state->grid_context->split_cones;
+    for (int cone = 0; cone < partition->num_cones; ++cone)
+    {
+        unsigned char type = partition->fixed_mask[cone] ? 2 : 1;
+        int start = partition->local_start[cone];
+        int count = partition->local_count[cone];
+        for (int slot = start; slot < start + count; ++slot)
+            host_type[slot] = type;
+    }
+}
+
 static void free_split_runtime(distributed_cone_split_t *split)
 {
     if (!split)
@@ -956,8 +973,8 @@ double get_split_cone_complementarity_norm(pdhg_solver_state_t *state, norm_type
         return get_vector_inf_norm(state->blas_handle, split->num_cones, split->complementarity_residual);
 
     double residual_norm = 0.0;
-    CUBLAS_CHECK(
-        cublasDnrm2_v2_64(state->blas_handle, split->num_cones, split->complementarity_residual, 1, &residual_norm));
+    DEVICE_CHECK(
+        pdhcg_device_nrm2(state->blas_handle, split->num_cones, split->complementarity_residual, 1, &residual_norm));
     return residual_norm;
 }
 
@@ -1009,8 +1026,8 @@ double get_split_affine_cone_complementarity_norm(pdhg_solver_state_t *state, no
         return get_vector_inf_norm(state->blas_handle, split->num_cones, split->complementarity_residual);
 
     double residual_norm = 0.0;
-    CUBLAS_CHECK(
-        cublasDnrm2_v2_64(state->blas_handle, split->num_cones, split->complementarity_residual, 1, &residual_norm));
+    DEVICE_CHECK(
+        pdhcg_device_nrm2(state->blas_handle, split->num_cones, split->complementarity_residual, 1, &residual_norm));
     return residual_norm;
 }
 

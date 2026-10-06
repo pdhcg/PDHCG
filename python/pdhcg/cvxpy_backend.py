@@ -29,6 +29,13 @@ from cvxpy.reductions.solvers.conic_solvers.conic_solver import ConicSolver
 from ._core import solve_once
 from .cones import ConeSpec, ConeType
 
+try:
+    # CVXPY 1.9+ formats PSD cones before the solver reduction.
+    from cvxpy.constraints import SvecPSD
+    from cvxpy.utilities.psd_utils import TriangleKind
+except ImportError:
+    SvecPSD = None
+
 _STATUS_MAP = {
     "OPTIMAL": _cvx_s.OPTIMAL,
     "PRIMAL_INFEASIBLE": _cvx_s.INFEASIBLE,
@@ -45,7 +52,12 @@ class PDHCG(ConicSolver):
     """PDHCG conic-solver plugin for CVXPY."""
 
     MIP_CAPABLE = False
-    SUPPORTED_CONSTRAINTS = [Zero, NonNeg, SOC, PSD, ExpCone, PowCone3D]
+    SUPPORTED_CONSTRAINTS = [
+        Zero, NonNeg, SOC, SvecPSD if SvecPSD is not None else PSD, ExpCone, PowCone3D
+    ]
+    if SvecPSD is not None:
+        PSD_TRIANGLE_KIND = TriangleKind.LOWER
+        PSD_SQRT2_SCALING = True
 
     # CVXPY's ExpCone convention is (x, y, z) with z >= y * exp(x/y), y > 0.
     # PDHCG's internal exp cone convention is (r1, r2, r3) with r3 >= r2 * exp(r1/r2).
@@ -325,7 +337,9 @@ class PDHCG(ConicSolver):
         )
 
         # Merge solver_opts into params dict (accepted keys are the PDHCG params).
-        params_dict = _translate_opts(solver_opts, verbose)
+        backend_opts = dict(solver_opts or {})
+        device = backend_opts.pop("device", None)
+        params_dict = _translate_opts(backend_opts, verbose)
 
         info = solve_once(
             Q=P_full,
@@ -343,6 +357,7 @@ class PDHCG(ConicSolver):
             dual_start=None,
             D=None,
             cones=cones_spec,
+            device=device,
         )
 
         # Build the solution dict expected by our invert().
@@ -375,6 +390,8 @@ class PDHCG(ConicSolver):
 # Map cvxpy solver_opts to pdhcg's params dict. Common cvxpy option names get
 # translated; anything else is passed through if it matches a pdhcg param key.
 _OPT_ALIASES = {
+    "Threads": "num_threads",
+    "threads": "num_threads",
     "time_limit": "time_sec_limit",
     "max_iter": "iteration_limit",
     "iter_limit": "iteration_limit",

@@ -31,6 +31,7 @@ _PARAM_ALIAS = {
     # limits / logging
     "TimeLimit": "time_sec_limit",
     "IterationLimit": "iteration_limit",
+    "Threads": "num_threads",
     "LogLevel": "verbose",
     "Verbosity": "verbose",
     "OutputFlag": "verbose",

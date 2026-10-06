@@ -11,11 +11,13 @@ It provides a high-level, Pythonic API using NumPy and SciPy data structures.
 ## Installation
 
 ### Requirements
-- Python ≥ 3.8
-- NumPy ≥ 1.21
-- SciPy ≥ 1.8
-- An NVIDIA GPU with CUDA support (≥12.4 required)
-- A C/C++ toolchain with GCC and NVCC
+
+| Component | Requirements |
+| --- | --- |
+| Python | Python ≥ 3.8, NumPy ≥ 1.21, SciPy ≥ 1.8 |
+| Source build | CMake ≥ 3.20, C99 and C++17 compilers, zlib |
+| CPU backend | OpenMP, LP64 BLAS/LAPACK |
+| CUDA backend | CUDA Toolkit ≥ 12.4 with NVCC; compatible NVIDIA GPU to run |
 
 !!! note "CUDA Version and SpMVOp"
     PDHCG automatically detects your CUDA version at compile time:
@@ -24,7 +26,7 @@ It provides a high-level, Pythonic API using NumPy and SciPy data structures.
     - **CUDA 12.x**: Falls back to the standard **SpMV** API. No manual intervention is required.
 
 !!! note "Multi-GPU support"
-    The Python interface currently supports single-GPU solving only. For multi-GPU distributed solving, build the C++ executable with `-DPDHCG_COMPILE_DISTRIBUTED=ON` and launch it via `mpirun` (see the [main README](../README.md)).
+    The Python interface currently supports single-GPU solving only. For multi-GPU distributed solving, build the native executable with `-DPDHCG_COMPILE_DISTRIBUTED=ON` and launch it via `mpirun` (see the [main README](../README.md)).
 
 ### Install
 Install from PyPI:
@@ -52,6 +54,9 @@ export SKBUILD_CMAKE_ARGS="-DCMAKE_CUDA_COMPILER=/your/path/to/nvcc"
 
 pip install pdhcg
 ```
+
+Source builds automatically include CPU/CUDA backends when their dependencies are available.
+Select a compiled backend with `model.optimize(device="cpu")` or `model.optimize(device="cuda")`; see the [installation guide](../docs/installation.md).
 
 ## Quick Start
 
@@ -233,7 +238,7 @@ Below is a list of commonly used parameters, their internal keys, and descriptio
 | `OptimalityNorm` | `optimality_norm` | string | `"linf"` | Norm for optimality criteria. Use `"l2"` for L2 norm or `"linf"` for infinity norm. |
 | `OptimalityTol` | `eps_optimal_relative` | float | `1e-4` | Relative tolerance for optimality gap. Solver stops if the relative primal-dual gap ≤ this value. |
 | `FeasibilityTol` | `eps_feasible_relative` | float | `1e-4` | Relative feasibility tolerance for primal/dual residuals. |
-| `InfeasibleTol` | `eps_infeasible` | float | `1e-12` | Tolerance used to validate infeasibility certificates. |
+| `InfeasibleTol` | `eps_infeasible` | float | `1e-10` | Tolerance used to validate infeasibility certificates. |
 | `CurtisReidIters` | `curtis_reid_iterations` | int | `0` | Number of Curtis-Reid log-domain scaling iterations. Set to `0` to disable. |
 | `RuizIters` | `l_inf_ruiz_iterations` | int | `10` | Number of iterations for L∞ Ruiz scaling. Improves numerical conditioning. |
 | `UsePCAlpha` | `has_pock_chambolle_alpha` | bool | `True` | Whether to use the Pock–Chambolle α step size adjustment. |

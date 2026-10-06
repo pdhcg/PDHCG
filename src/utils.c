@@ -14,32 +14,18 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-#include "pdhcg_kernels.h"
+#include "utils.h"
+#include "infeasibility.h"
+#include "device_kernels.h"
 #include "solver_state.h"
 #include "spmv_backend.h"
-#include "utils.h"
 #include <math.h>
-#include <random>
 #include <signal.h>
+#include <string.h>
 
 #ifndef PDHCG_VERSION
 #define PDHCG_VERSION "unknown"
 #endif
-
-double get_uniform_random()
-{
-    thread_local std::mt19937 gen(1);
-    thread_local std::uniform_real_distribution<double> dist(0.0, 1.0);
-
-    return dist(gen);
-}
-
-double get_normal_random()
-{
-    thread_local std::mt19937 gen(1);
-    thread_local std::normal_distribution<double> dist(0.0, 1.0);
-    return dist(gen);
-}
 
 void *safe_malloc(size_t size)
 {
@@ -137,19 +123,19 @@ void compute_interaction_and_movement(pdhg_solver_state_t *state, double *intera
 {
     double dual_norm, primal_norm, cross_term;
 
-    CUBLAS_CHECK(
-        cublasDnrm2_v2_64(state->blas_handle, state->num_constraints, state->delta_dual_solution, 1, &dual_norm));
-    CUBLAS_CHECK(
-        cublasDnrm2_v2_64(state->blas_handle, state->num_variables, state->delta_primal_solution, 1, &primal_norm));
+    DEVICE_CHECK(
+        pdhcg_device_nrm2(state->blas_handle, state->num_constraints, state->delta_dual_solution, 1, &dual_norm));
+    DEVICE_CHECK(
+        pdhcg_device_nrm2(state->blas_handle, state->num_variables, state->delta_primal_solution, 1, &primal_norm));
     *movement = 0.5 * (primal_norm * primal_norm * state->primal_weight + dual_norm * dual_norm / state->primal_weight);
 
-    CUBLAS_CHECK(cublasDdot(state->blas_handle,
-                            state->num_variables,
-                            state->dual_product,
-                            1,
-                            state->delta_primal_solution,
-                            1,
-                            &cross_term));
+    DEVICE_CHECK(pdhcg_device_dot(state->blas_handle,
+                                  state->num_variables,
+                                  state->dual_product,
+                                  1,
+                                  state->delta_primal_solution,
+                                  1,
+                                  &cross_term));
     *interaction = fabs(cross_term);
 }
 
@@ -227,24 +213,6 @@ bool optimality_criteria_met(const pdhg_solver_state_t *state, double rel_opt_to
 #endif
 }
 
-bool primal_infeasibility_criteria_met(const pdhg_solver_state_t *state, double eps)
-{
-    if (state->dual_ray_objective <= 0.0)
-    {
-        return false;
-    }
-    return state->max_dual_ray_infeasibility / state->dual_ray_objective <= eps;
-}
-
-bool dual_infeasibility_criteria_met(const pdhg_solver_state_t *state, double eps)
-{
-    if (state->primal_ray_linear_objective >= 0.0)
-    {
-        return false;
-    }
-    return state->max_primal_ray_infeasibility / (-state->primal_ray_linear_objective) <= eps;
-}
-
 extern volatile sig_atomic_t g_pdhcg_cancel_request;
 
 void check_termination_criteria(pdhg_solver_state_t *solver_state, const termination_criteria_t *criteria)
@@ -260,21 +228,11 @@ void check_termination_criteria(pdhg_solver_state_t *solver_state, const termina
         solver_state->termination_reason = TERMINATION_REASON_OPTIMAL;
         return;
     }
-    /* The current ray projection handles box recession directions only. Direct
-       cones require cone/dual-cone membership checks before either certificate
-       is valid. */
-    if (!solver_state->has_variable_cones)
+    termination_reason_t infeasibility = check_infeasibility_criteria(solver_state, criteria->eps_infeasible);
+    if (infeasibility != TERMINATION_REASON_UNSPECIFIED)
     {
-        if (primal_infeasibility_criteria_met(solver_state, criteria->eps_infeasible))
-        {
-            solver_state->termination_reason = TERMINATION_REASON_PRIMAL_INFEASIBLE;
-            return;
-        }
-        if (dual_infeasibility_criteria_met(solver_state, criteria->eps_infeasible))
-        {
-            solver_state->termination_reason = TERMINATION_REASON_DUAL_INFEASIBLE;
-            return;
-        }
+        solver_state->termination_reason = infeasibility;
+        return;
     }
     if (solver_state->total_count >= criteria->iteration_limit)
     {
@@ -330,6 +288,7 @@ void set_default_parameters(pdhg_parameters_t *params)
     params->bound_objective_rescaling = true;
     params->use_cone_preserving_scaling = true;
     params->verbose = 1;
+    params->num_threads = 0;
     params->termination_evaluation_frequency = 200;
     params->feasibility_polishing = false;
     params->reflection_coefficient = 1.0;
@@ -341,7 +300,7 @@ void set_default_parameters(pdhg_parameters_t *params)
 
     params->termination_criteria.eps_optimal_relative = 1e-4;
     params->termination_criteria.eps_feasible_relative = 1e-4;
-    params->termination_criteria.eps_infeasible = 1e-12;
+    params->termination_criteria.eps_infeasible = 1e-10;
     params->termination_criteria.time_sec_limit = 3600.0;
     params->termination_criteria.iteration_limit = INT32_MAX;
     params->termination_criteria.eps_feas_polish_relative = 1e-6;
@@ -398,6 +357,12 @@ void set_default_parameters(pdhg_parameters_t *params)
         }                                                                                                              \
     } while (0)
 
+static void print_centered(const char *text)
+{
+    int padding = (96 + (int)strlen(text)) / 2;
+    printf("%*s\n", padding, text);
+}
+
 void print_initial_info(const pdhg_parameters_t *params, const qp_problem_t *problem)
 {
     pdhg_parameters_t default_params;
@@ -407,21 +372,13 @@ void print_initial_info(const pdhg_parameters_t *params, const qp_problem_t *pro
         return;
     }
 
-    const int total_width = 96;
     const char *line = "---------------------------------------------------------"
                        "------------------------------------------";
 
     printf("%s\n", line);
 
-    auto print_centered = [total_width](const char *text)
-    {
-        int len = strlen(text);
-        int padding = (total_width + len) / 2;
-        printf("%*s\n", padding, text);
-    };
-
     print_centered("PDHCG");
-    print_centered("A GPU-Accelerated First-Order Solver for Convex QPs");
+    print_centered("A First-Order Solver for Convex Quadratic and Conic Programs");
     print_centered("(c) Hongpei Li, 2026");
     print_centered("Contact: ishongpeili@gmail.com");
     printf("\n");
@@ -459,7 +416,8 @@ void print_initial_info(const pdhg_parameters_t *params, const qp_problem_t *pro
     printf("  time_limit         : %.2f sec\n", params->termination_criteria.time_sec_limit);
     printf("  eps_opt            : %.1e\n", params->termination_criteria.eps_optimal_relative);
     printf("  eps_feas           : %.1e\n", params->termination_criteria.eps_feasible_relative);
-    printf("  eps_infeas_detect  : %.1e\n", params->termination_criteria.eps_infeasible);
+    printf("  eps_infeasible     : %.1e\n", params->termination_criteria.eps_infeasible);
+    printf("  compute device     : %s\n", pdhcg_device_name());
     printf("  spmv backend       : %s\n", pdhcg_use_spmvop_by_default() ? "SpMVOp" : "SpMV");
     if (params->optimality_norm != default_params.optimality_norm)
     {
@@ -472,6 +430,7 @@ void print_initial_info(const pdhg_parameters_t *params, const qp_problem_t *pro
     }
 
     PRINT_DIFF_INT("curtis_reid_iter", params->curtis_reid_iterations, default_params.curtis_reid_iterations);
+    PRINT_DIFF_INT("num_threads", params->num_threads, default_params.num_threads);
     PRINT_DIFF_INT("l_inf_ruiz_iter", params->l_inf_ruiz_iterations, default_params.l_inf_ruiz_iterations);
     PRINT_DIFF_DBL("pock_chambolle_alpha", params->pock_chambolle_alpha, default_params.pock_chambolle_alpha);
     PRINT_DIFF_BOOL(
@@ -554,20 +513,20 @@ int get_print_frequency(int iter)
     return step;
 }
 
-double get_vector_inf_norm(cublasHandle_t handle, int n, const double *x_d)
+double get_vector_inf_norm(pdhcg_device_blas_t handle, int n, const double *x_d)
 {
     if (n <= 0)
         return 0.0;
 
     int index = 1;
 
-    CUBLAS_CHECK(cublasIdamax(handle, n, x_d, 1, &index));
+    DEVICE_CHECK(pdhcg_device_iamax(handle, n, x_d, 1, &index));
 
     if (index < 1 || index > n)
         return 0.0;
 
     double max_val = 0.0;
-    CUDA_CHECK(cudaMemcpy(&max_val, x_d + (index - 1), sizeof(double), cudaMemcpyDeviceToHost));
+    DEVICE_CHECK(pdhcg_device_copy(&max_val, x_d + (index - 1), sizeof(double), PDHCG_COPY_DEVICE_TO_HOST));
 
     if (!isfinite(max_val))
         return INFINITY;
@@ -575,13 +534,13 @@ double get_vector_inf_norm(cublasHandle_t handle, int n, const double *x_d)
     return fabs(max_val);
 }
 
-double get_vector_sum(cublasHandle_t handle, int n, double *ones_d, const double *x_d)
+double get_vector_sum(pdhcg_device_blas_t handle, int n, double *ones_d, const double *x_d)
 {
     if (n <= 0)
         return 0.0;
 
     double sum;
-    CUBLAS_CHECK(cublasDdot(handle, n, x_d, 1, ones_d, 1, &sum));
+    DEVICE_CHECK(pdhcg_device_dot(handle, n, x_d, 1, ones_d, 1, &sum));
     return sum;
 }
 

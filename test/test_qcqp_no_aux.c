@@ -1,4 +1,20 @@
 /*
+Copyright 2026 Hongpei Li
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+        http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+/*
  * Same QCQP (min -x + y^2  s.t.  x^2 + y^2 <= 1) tested two ways:
  *   A) lifted with aux v_i = sqrt(2) x_i: cone slots have NO Q  -> closed form path
  *   B) NO aux: cone slots ARE (x, y, s, t) with s=t=1/2, Q lives on cone slot y

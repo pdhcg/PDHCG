@@ -19,9 +19,10 @@ m.setParams(TimeLimit=3600, LogLevel=1)
 |-----------|------|---------|-------------|
 | `TimeLimit` | float | 3600.0 | Time limit in seconds |
 | `IterationLimit` | int | 2147483647 | Maximum number of iterations |
+| `Threads` | int | 0 | CPU thread limit; 0 inherits OpenMP settings; ignored by CUDA |
 | `OptTol` | float | 1e-4 | Relative optimality tolerance |
 | `FeasTol` | float | 1e-4 | Relative feasibility tolerance |
-| `InfeasTol` | float | 1e-12 | Infeasibility detection tolerance |
+| `InfeasibleTol` | float | 1e-10 | Infeasibility certificate tolerance; finite and nonnegative |
 
 ### Algorithm Parameters
 

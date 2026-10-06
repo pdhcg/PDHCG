@@ -1,0 +1,78 @@
+name: Static Checks
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: static-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python syntax and errors
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Install Ruff
+        run: python -m pip install --disable-pip-version-check 'ruff==0.9.0'
+      - name: Check Python sources
+        # Check all tracked Python sources and stubs, including legacy test/
+        # scripts under ignored directories, without traversing build artifacts.
+        shell: bash
+        run: |
+          export PYTHONPYCACHEPREFIX="$RUNNER_TEMP/pdhcg-static-pycache"
+          mapfile -d '' python_files < <(git ls-files -z -- '*.py' '*.pyi')
+          test "${#python_files[@]}" -gt 0
+          python -m py_compile "${python_files[@]}"
+          ruff check --no-cache --no-respect-gitignore \
+            --select E9,F63,F7,F82 -- "${python_files[@]}"
+
+  workflows:
+    name: Workflows and embedded shell
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      ACTIONLINT_VERSION: '1.7.12'
+      ACTIONLINT_SHA256: '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8'
+      SHELLCHECK_VERSION: '0.11.0'
+      SHELLCHECK_SHA256: '8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install verified workflow tools
+        # Official release archives; hashes are also recorded in each
+        # release asset's SHA-256 digest on GitHub.
+        shell: bash
+        run: |
+          tools_dir="$RUNNER_TEMP/pdhcg-static-tools"
+          mkdir -p "$tools_dir"
+          curl --fail --silent --show-error --location --retry 3 \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
+            --output "$tools_dir/actionlint.tar.gz"
+          printf '%s  %s\n' "$ACTIONLINT_SHA256" "$tools_dir/actionlint.tar.gz" | sha256sum --check --status
+          tar -xzf "$tools_dir/actionlint.tar.gz" -C "$tools_dir" actionlint
+          curl --fail --silent --show-error --location --retry 3 \
+            "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz" \
+            --output "$tools_dir/shellcheck.tar.xz"
+          printf '%s  %s\n' "$SHELLCHECK_SHA256" "$tools_dir/shellcheck.tar.xz" | sha256sum --check --status
+          tar -xJf "$tools_dir/shellcheck.tar.xz" -C "$tools_dir" --strip-components=1 \
+            "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
+          "$tools_dir/actionlint" -version
+          "$tools_dir/shellcheck" --version
+          printf '%s\n' "$tools_dir" >> "$GITHUB_PATH"
+      - name: Check active workflows and shell scripts
+        shell: bash
+        run: |
+          shopt -s nullglob
+          workflows=(.github/workflows/*.yml .github/workflows/*.yaml)
+          test "${#workflows[@]}" -gt 0
+          actionlint -color -shellcheck=shellcheck -pyflakes= "${workflows[@]}"
