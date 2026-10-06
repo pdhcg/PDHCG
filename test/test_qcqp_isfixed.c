@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
 /*
  * Same QCQP (min -x + y^2 s.t. x^2 + y^2 <= 1, optimum x=1, y=0, obj=-1) lifted two ways:
  *

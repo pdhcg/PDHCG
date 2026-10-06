@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
 /*
  * End-to-end test: Fisher quasi-linear market solved via exponential-cone
  * formulation through the PDHCG conic API. Builds a random sparse buyer/

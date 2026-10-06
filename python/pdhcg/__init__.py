@@ -34,10 +34,11 @@ Links
 from importlib.metadata import PackageNotFoundError, version
 
 from . import PDHCG
+from ._core import built_devices, print_devices
 from .cones import ConeSpec, ConeType
 from .model import Model
 
-__all__ = ["ConeSpec", "ConeType", "Model", "PDHCG"]
+__all__ = ["ConeSpec", "ConeType", "Model", "PDHCG", "built_devices", "print_devices"]
 
 # get version from package metadata (toml file)
 try:

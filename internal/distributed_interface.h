@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
 #ifndef PDHCG_DISTRIBUTED_INTERFACE_H
 #define PDHCG_DISTRIBUTED_INTERFACE_H
 

@@ -3,13 +3,14 @@ include LICENSE
 include pyproject.toml
 
 include CMakeLists.txt
+graft cmake
 
 graft include
 graft internal
 
-recursive-include src *.c *.cu
+recursive-include src *.c *.cu *.h
 
-recursive-include python_bindings *.cpp CMakeLists.txt
+recursive-include python_bindings *.cpp *.in CMakeLists.txt
 
 graft python
 

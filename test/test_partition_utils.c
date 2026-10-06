@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
 #include "partition_utils.h"
 
 #include <stdio.h>

@@ -707,9 +707,12 @@ class Model:
         validate_params(candidate)
         self._params = candidate
 
-    def optimize(self):
+    def optimize(self, *, device: Optional[str] = None):
         """
         Solve the quadratic programming problem using the PDHCG solver.
+
+        device selects a compiled backend ("cpu" or "cuda") for this call only.
+        None uses the default selected when building the package.
         """
         # clear cached solution
         self._clear_solution_cache()
@@ -741,6 +744,7 @@ class Model:
             affine_F=self.affine_F,
             affine_g=self.affine_g,
             affine_cones=self._affine_cones,
+            device=device,
         )
         # solutions
         self._x = np.asarray(info.get("X")) if info.get("X") is not None else None

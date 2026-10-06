@@ -16,6 +16,7 @@ limitations under the License.
 */
 
 #include "pdhcg.h"
+#include "device_general_op.h"
 #include "cone_utils.h"
 #include "distributed_interface.h"
 #include "solver.h"
@@ -58,6 +59,8 @@ int pdhcg_validate_parameters(const pdhg_parameters_t *params, char *error_messa
         return parameter_error(error_message, error_message_size, "pock_chambolle_alpha must be in [0, 2]");
     if (params->verbose < 0)
         return parameter_error(error_message, error_message_size, "verbose must be nonnegative");
+    if (params->num_threads < 0)
+        return parameter_error(error_message, error_message_size, "num_threads must be nonnegative (0 uses the runtime default)");
     if (params->termination_evaluation_frequency <= 0)
         return parameter_error(error_message, error_message_size, "termination_evaluation_frequency must be positive");
     if (params->sv_max_iter <= 0)
@@ -987,6 +990,18 @@ int pdhcg_validate_fixed_cone_sections(const qp_problem_t *problem)
     return 0;
 }
 
+typedef struct
+{
+    const pdhg_parameters_t *params;
+    const qp_problem_t *problem;
+} solve_call_t;
+
+static void *run_optimize(void *argument)
+{
+    const solve_call_t *call = argument;
+    return optimize(call->params, call->problem);
+}
+
 pdhcg_result_t *solve_qp_problem(const qp_problem_t *prob, const pdhg_parameters_t *params)
 {
     if (!prob)
@@ -1013,7 +1028,8 @@ pdhcg_result_t *solve_qp_problem(const qp_problem_t *prob, const pdhg_parameters
     if (pdhcg_validate_fixed_cone_sections(prob) != 0)
         return NULL;
 
-    pdhcg_result_t *res = optimize(&local_params, prob);
+    solve_call_t call = {&local_params, prob};
+    pdhcg_result_t *res = pdhcg_device_with_threads(local_params.num_threads, run_optimize, &call);
     if (!res)
     {
         fprintf(stderr, "[interface] optimize returned NULL.\n");

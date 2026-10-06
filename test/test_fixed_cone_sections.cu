@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
+#include "device/cuda/checks.h"
 #include "internal_types.h"
 #include "pdhcg_affine_cone_kernels.h"
 #include "pdhcg_cone_common_kernels.h"

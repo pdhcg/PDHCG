@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
 /*
  * E2E test for off-diagonal (sparse) Q on non-cone vars coupled to a SOC cone.
  * Exercises both inner-proximal and linearized SPARSE_Q updates with the same

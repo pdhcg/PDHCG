@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """
 Smoke test for the optional middle matrix D in Q + R^T D R.
 

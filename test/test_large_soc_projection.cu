@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
+#include "device/cuda/checks.h"
 /*
 Copyright 2026 Hongpei Li
 

@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
+#include "device/cuda/checks.h"
 #include "pdhcg_psd_cone.h"
 
 #include <cuda_runtime.h>

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
 #include "cbf_parser.h"
 #include "pdhcg.h"
 

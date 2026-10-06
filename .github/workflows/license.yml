@@ -1,0 +1,29 @@
+name: License CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: license-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  license:
+    name: Source license declarations
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test the license checker
+        run: python -m unittest discover -s .github -p 'test_check_license.py' -v
+      - name: Check Apache license, package metadata and source headers
+        run: python .github/check_license.py

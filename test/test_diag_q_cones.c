@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
 /*
  * E2E tests for diagonal-Q PDHG with cone constraints.
  *   Test 1: standard SOC with diag Q, boundary-active solution.

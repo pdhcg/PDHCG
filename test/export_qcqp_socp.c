@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
 #include "mps_parser.h"
 #include "pdhcg.h"
 #include "pdhcg_types.h"

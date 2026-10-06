@@ -1,0 +1,129 @@
+name: CPU CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cpu-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CMAKE_BUILD_PARALLEL_LEVEL: 4
+  OMP_NUM_THREADS: 2
+  OPENBLAS_NUM_THREADS: 1
+  MKL_NUM_THREADS: 1
+  PDHCG_TEST_CUDA: 0
+  PDHCG_TEST_CUDA_LIBRARIES: 0
+
+jobs:
+  native:
+    name: C and CLI (${{ matrix.name }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: release
+            build-type: Release
+            c-flags: ''
+          - name: sanitizers
+            build-type: Debug
+            c-flags: '-fsanitize=address,undefined -fno-omit-frame-pointer'
+    env:
+      # Start BLAS with several threads: PDHCG must limit and restore it itself.
+      OPENBLAS_NUM_THREADS: 4
+      MKL_NUM_THREADS: 4
+      ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install CPU dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build libopenblas-dev liblapack-dev zlib1g-dev
+      - name: Configure CPU library, CLI and tests
+        run: |
+          cmake -S . -B build-cpu -G Ninja \
+            -DPDHCG_DEVICES=CPU \
+            -DPDHCG_BUILD_TESTS=ON \
+            -DPDHCG_BUILD_CLI=ON \
+            -DPDHCG_BUILD_PYTHON=OFF \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build-type }} \
+            -DCMAKE_C_FLAGS="${{ matrix.c-flags }}"
+      - name: Build
+        run: cmake --build build-cpu
+      - name: C regression tests
+        run: >-
+          ctest --test-dir build-cpu --output-on-failure --no-tests=error
+          --parallel 1 --timeout 120 --output-junit ctest.xml
+      - name: CLI device listing and file solves
+        run: python tests/check_cli.py --binary build-cpu/pdhcg
+      - name: Save test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpu-native-${{ matrix.name }}
+          path: |
+            build-cpu/ctest.xml
+            build-cpu/Testing/Temporary/*.log
+          if-no-files-found: warn
+          retention-days: 7
+
+  python:
+    name: Python ${{ matrix.python-version }} / CVXPY ${{ matrix.cvxpy }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python-version: '3.10'
+            cvxpy: '==1.6.7'
+          - python-version: '3.12'
+            cvxpy: '>=1.6'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install CPU dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build libopenblas-dev liblapack-dev zlib1g-dev
+      - name: Build CPU wheel and source distribution
+        run: |
+          python -m pip install build
+          python -m build --wheel --sdist -Ccmake.define.PDHCG_DEVICES=CPU
+      - name: Install wheel and test dependencies
+        run: |
+          python -m pip install dist/*.whl
+          python -m pip install pytest pytest-cov 'cvxpy${{ matrix.cvxpy }}'
+          python -m pip install 'tomli==2.2.1; python_version < "3.11"'
+      - name: Check licenses in release archives
+        run: python .github/check_license.py --artifacts dist/*.whl dist/*.tar.gz
+      - name: Verify installed backend
+        run: |
+          python -c "import pdhcg; pdhcg.print_devices(); assert pdhcg.built_devices() == ('cpu',)"
+      - name: Python and CVXPY regression tests
+        # This job checks correctness; it does not impose a coverage threshold.
+        run: python -m pytest tests --no-cov --junitxml=pytest.xml
+      - name: Save test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpu-python-${{ matrix.python-version }}
+          path: pytest.xml
+          if-no-files-found: warn
+          retention-days: 7

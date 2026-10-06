@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
 #include "pdhcg.h"
 
 #include <stdio.h>
@@ -118,6 +120,13 @@ int main(void)
     CHECK(parameters.permute_block_size == 256);
     CHECK(pdhcg_validate_parameters(&parameters, error_message, sizeof(error_message)) == 0);
     CHECK(error_message[0] == '\0');
+    CHECK(parameters.num_threads == 0);
+    parameters.num_threads = -1;
+    CHECK(pdhcg_validate_parameters(&parameters, error_message, sizeof(error_message)) != 0);
+    CHECK(strstr(error_message, "num_threads") != NULL);
+    parameters.num_threads = 2;
+    CHECK(pdhcg_validate_parameters(&parameters, error_message, sizeof(error_message)) == 0);
+    parameters.num_threads = 0;
     parameters.non_diagonal_quadratic_mode = (non_diagonal_quadratic_mode_t)99;
     CHECK(pdhcg_validate_parameters(&parameters, error_message, sizeof(error_message)) != 0);
     parameters.non_diagonal_quadratic_mode = NON_DIAGONAL_QUADRATIC_INNER;

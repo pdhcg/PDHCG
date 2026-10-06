@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
 /*
  * create_qp_problem must reject a finite box bound on a cone slot.
  * Lift such variables manually with an auxiliary x_cone = x_box.

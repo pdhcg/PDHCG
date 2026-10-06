@@ -2,18 +2,15 @@
 
 ## Requirements
 
-- **GPU**: NVIDIA GPU with CUDA 12.4+
-- **Build Tools**: CMake (≥ 3.20), GCC, NVCC
-- **Python**: Python 3.8+ (for Python bindings)
-- **Distributed (Optional)**: MPI (e.g., OpenMPI) and NCCL for multi-GPU support
+| Component | Requirements |
+| --- | --- |
+| Build | CMake ≥ 3.20, C99 compiler, zlib |
+| CPU backend | OpenMP, LP64 BLAS/LAPACK |
+| CUDA backend | CUDA Toolkit ≥ 12.4 with NVCC; compatible NVIDIA GPU to run |
+| Python bindings | C++17 compiler, Python ≥ 3.8, NumPy ≥ 1.21, SciPy ≥ 1.8 |
+| Multi-GPU (optional) | MPI, NCCL, C++17 compiler |
 
-!!! note "CUDA Version and SpMVOp"
-    PDHCG automatically detects your CUDA version at compile time:
-
-    - **CUDA 13+**: Uses cuSPARSE **SpMVOp** for improved performance.
-    - **CUDA 12.x**: Falls back to the standard **SpMV** API. No manual intervention is required.
-
-## C++ Executable
+## Command-Line Executable
 
 ### Build from Source
 
@@ -28,6 +25,33 @@ cmake --build build --clean-first
 
 This will create the solver binary at `./build/pdhcg`.
 
+`PDHCG_DEVICES=AUTO` (default) builds the backends whose dependencies are available.
+CMake prints the selected devices at the end of configuration.
+To select explicitly, use `-DPDHCG_DEVICES=CPU`, `CUDA`, or `"CPU;CUDA"`;
+missing dependencies then cause an error.
+
+The default backend is CUDA when available under AUTO, or the first backend in an
+explicit list; override it with `PDHCG_DEFAULT_DEVICE`. Its executable is `pdhcg`;
+additional backends use suffixes such as `pdhcg_cpu`.
+Run `./build/pdhcg --list-devices` to display the compiled devices.
+
+### Build the CPU Backend
+
+```bash
+cmake -S . -B build-cpu -DPDHCG_DEVICES=CPU
+cmake --build build-cpu
+./build-cpu/pdhcg problem.qps results/ --threads 8
+```
+
+`--threads` sets the CPU thread limit; `0` (default) inherits OpenMP settings.
+PDHCG automatically limits supported OpenBLAS/MKL libraries to one BLAS thread.
+OpenBLAS uses a shared setting: applications must synchronize other calls and
+thread-setting changes on the same library instance with PDHCG solves.
+For other threaded BLAS libraries, configure one BLAS thread manually;
+CMake reports the detected support.
+
+When enabling PreFOS with CPU, also set `-DPDHCG_PREFOS_ENABLE_CUDA=OFF`.
+
 ### Specifying CUDA Compiler
 
 If your system has multiple CUDA versions or the default nvcc is outdated, explicitly specify the path to your CUDA compiler:
@@ -40,7 +64,7 @@ cmake --build build --clean-first
 
 ### Build with Multi-GPU Support
 
-To enable distributed multi-GPU solving, turn on the `PDHCG_COMPILE_DISTRIBUTED` CMake option. This requires MPI and NCCL to be installed on your system.
+Multi-GPU solving requires the CUDA backend, MPI and NCCL:
 
 ```bash
 cmake -S . -B build -DPDHCG_COMPILE_DISTRIBUTED=ON
@@ -52,7 +76,7 @@ When enabled, the solver binary automatically detects whether it is launched wit
 ## Python Package
 
 !!! note "Multi-GPU support"
-    The Python interface currently supports single-GPU solving only. For multi-GPU distributed solving, build the C++ executable with `-DPDHCG_COMPILE_DISTRIBUTED=ON` and launch it via `mpirun`.
+    The Python interface currently supports single-GPU solving only. For multi-GPU distributed solving, build the native executable with `-DPDHCG_COMPILE_DISTRIBUTED=ON` and launch it via `mpirun`.
 
 ### From PyPI (Recommended)
 
@@ -68,6 +92,19 @@ cd PDHCG
 pip install .
 ```
 
+Source builds use the same AUTO selection. To select backends explicitly:
+
+```bash
+pip install . -Ccmake.define.PDHCG_DEVICES=CPU
+# Or include both:
+pip install . '-Ccmake.define.PDHCG_DEVICES=CPU;CUDA'
+```
+
+Use `model.optimize(device="cpu")` or `model.optimize(device="cuda")` to select
+among compiled backends for each solve; omitting `device` uses the build default.
+`pdhcg.built_devices()` returns the compiled devices, and `pdhcg.print_devices()`
+displays them. With the CVXPY adapter, use `problem.solve(solver="PDHCG", device="cpu")`.
+
 ### Development Installation
 
 For development with editable install:
@@ -78,20 +115,9 @@ cd PDHCG
 pip install -e ".[test]"
 ```
 
-If your system has multiple CUDA installations or the default nvcc (typically in `/usr/bin/nvcc`) is outdated, you must explicitly point to your modern CUDA compiler using environment variables:
-
-```bash
-# Replace '/your/path/to/nvcc' with your actual path
-# Example: export CUDACXX=/usr/local/cuda-12.6/bin/nvcc
-export CUDACXX=/your/path/to/nvcc
-export SKBUILD_CMAKE_ARGS="-DCMAKE_CUDA_COMPILER=/your/path/to/nvcc"
-
-pip install pdhcg
-```
-
 ## Verification
 
-### C++ Executable
+### Native Executable
 
 ```bash
 ./build/pdhcg --help

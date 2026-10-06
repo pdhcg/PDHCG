@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
 /*
  * Same QCQP (min -x + y^2  s.t.  x^2 + y^2 <= 1) tested two ways:
  *   A) lifted with aux v_i = sqrt(2) x_i: cone slots have NO Q  -> closed form path

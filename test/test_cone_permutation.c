@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
 #include "cone_utils.h"
 #include "pdhcg.h"
 #include "permute.h"

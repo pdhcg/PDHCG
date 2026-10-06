@@ -14,6 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+#include "../checks.h"
 #include "cone_kernel_ops.h"
 #include "pdhcg_power_cone_kernels.h"
 #include "utils.h"

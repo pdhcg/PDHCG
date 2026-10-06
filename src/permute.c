@@ -13,13 +13,12 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
+#include "permute.h"
 #include "cone_utils.h"
 #include "pdhcg.h"
-#include "permute.h"
 #include "utils.h"
 #include <math.h>
-#include <random>
-#include <vector>
+#include <string.h>
 
 #ifndef MIN
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))
@@ -361,30 +360,42 @@ static void generate_cone_aware_vector_permutation(
     }
     qsort(cone_units, (size_t)K, sizeof(permutation_unit_t), compare_units_by_start);
 
-    std::vector<permutation_unit_t> units;
-    int cursor = 0;
     int free_block = (method == FULL_RANDOM_PERMUTATION) ? 1 : ((block_size > 0) ? block_size : 1);
+    /* Count whole cones and free-coordinate blocks before allocating the array. */
+    size_t capacity = (size_t)K;
+    int cursor = 0;
+    for (int cone = 0; cone < K; ++cone)
+    {
+        int gap = cone_units[cone].start - cursor;
+        capacity += gap / free_block + (gap % free_block != 0);
+        cursor = cone_units[cone].start + cone_units[cone].length;
+    }
+    int gap = n - cursor;
+    capacity += gap / free_block + (gap % free_block != 0);
+    permutation_unit_t *units = safe_malloc(capacity * sizeof(*units));
+    int num_units = 0;
+    cursor = 0;
     for (int cone = 0; cone < K; ++cone)
     {
         int cone_start = cone_units[cone].start;
         while (cursor < cone_start)
         {
             int length = MIN(free_block, cone_start - cursor);
-            units.push_back({cursor, length});
+            units[num_units++] = (permutation_unit_t){cursor, length};
             cursor += length;
         }
-        units.push_back(cone_units[cone]);
+        units[num_units++] = cone_units[cone];
         cursor = cone_start + cone_units[cone].length;
     }
     while (cursor < n)
     {
         int length = MIN(free_block, n - cursor);
-        units.push_back({cursor, length});
+        units[num_units++] = (permutation_unit_t){cursor, length};
         cursor += length;
     }
     free(cone_units);
 
-    for (int i = (int)units.size() - 1; i > 0; --i)
+    for (int i = num_units - 1; i > 0; --i)
     {
         int j = rand() % (i + 1);
         permutation_unit_t tmp = units[i];
@@ -393,9 +404,10 @@ static void generate_cone_aware_vector_permutation(
     }
 
     int out = 0;
-    for (const permutation_unit_t &unit : units)
-        for (int slot = 0; slot < unit.length; ++slot)
-            perm[out++] = unit.start + slot;
+    for (int i = 0; i < num_units; ++i)
+        for (int slot = 0; slot < units[i].length; ++slot)
+            perm[out++] = units[i].start + slot;
+    free(units);
 }
 
 void generate_cone_aware_permutation(const qp_problem_t *qp, permute_method_t method, int block_size, int *perm)

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
 /*
  * QCQP: min -sum(x_i)  s.t.  x_i^2 <= 1 for i=1..N
  *

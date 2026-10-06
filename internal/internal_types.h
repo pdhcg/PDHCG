@@ -16,13 +16,11 @@ limitations under the License.
 */
 
 #pragma once
+#include "device_general_op.h"
 
-#include "cusparse_compat.h"
 #include "distributed_interface.h"
 #include "pdhcg_types.h"
 #include "spmv_backend.h"
-#include <cublas_v2.h>
-#include <cusparse.h>
 
 typedef struct
 {
@@ -32,11 +30,11 @@ typedef struct
     int *row_ptr;
     int *col_ind;
     double *val;
-} cu_sparse_matrix_csr_t;
+} device_sparse_matrix_csr_t;
 
 typedef struct
 {
-    cu_sparse_matrix_csr_t *objective_sparse_matrix;
+    device_sparse_matrix_csr_t *objective_sparse_matrix;
     double *diagonal_objective_matrix;
     quad_obj_type_t quad_obj_type;
 
@@ -46,16 +44,16 @@ typedef struct
     double nonconvexity;
     double *primal_obj_product;
 
-    cusparseDnVecDescr_t vec_primal_obj_prod;
+    pdhcg_device_vector_t vec_primal_obj_prod;
 
-    cu_sparse_matrix_csr_t *objective_lowrank_matrix;
-    cu_sparse_matrix_csr_t *objective_lowrank_matrix_t;
+    device_sparse_matrix_csr_t *objective_lowrank_matrix;
+    device_sparse_matrix_csr_t *objective_lowrank_matrix_t;
     pdhcg_spmv_ctx_t *spmv_ctx_R;
     pdhcg_spmv_ctx_t *spmv_ctx_Rt;
 
     double *Rx_product;
 
-    cusparseDnVecDescr_t vec_Rx_prod;
+    pdhcg_device_vector_t vec_Rx_prod;
     int num_rank_lowrank_obj;
 
     int lowrank_middle_type;
@@ -64,7 +62,7 @@ typedef struct
     double *Rx_buffer;
 
     double *global_primal_obj_product;
-    cusparseDnVecDescr_t vec_global_primal_obj_prod;
+    pdhcg_device_vector_t vec_global_primal_obj_prod;
 } quadratic_objective_term_t;
 
 static inline bool quadratic_type_has_sparse_component(quad_obj_type_t type)
@@ -125,8 +123,10 @@ typedef struct
     int *v_dim;                           /* permuted by bucket */
     double *power_alpha;                  /* permuted by bucket; NULL if no power cones */
     char *is_fixed;                       /* NULL if no fixes */
-    double *projection_warm_start;        /* device [PDHCG_CONE_WORKSPACE_STRIDE * num_blocks] */
-    double *residual_warm_start;          /* device [PDHCG_CONE_WORKSPACE_STRIDE * num_blocks] */
+    unsigned char *infeasibility_type;    /* device [num_variables], variable side: 0 box, 1 cone, 2 fixed section */
+    double *projection_workspace;        /* device [PDHCG_CONE_WORKSPACE_STRIDE * num_blocks] */
+    double *residual_workspace;          /* device [PDHCG_CONE_WORKSPACE_STRIDE * num_blocks] */
+    double *infeasibility_workspace;     /* device [PDHCG_CONE_WORKSPACE_STRIDE * num_blocks] */
     double *complementarity_residual;     /* device [num_blocks] */
     double *power_violation_workspace;    /* device [2 * num_blocks], variable side only */
     double *coordinate_rescaling;         /* device [num_constraints], affine side only */
@@ -157,14 +157,11 @@ typedef struct
     double *objective_vector;
     double objective_constant;
     quadratic_objective_term_t *quadratic_objective_term;
-    cu_sparse_matrix_csr_t *constraint_matrix;
-    cu_sparse_matrix_csr_t *constraint_matrix_t;
+    device_sparse_matrix_csr_t *constraint_matrix;
+    device_sparse_matrix_csr_t *constraint_matrix_t;
     double *constraint_lower_bound;
     double *constraint_upper_bound;
     double *affine_cone_offset;
-    int num_blocks_primal;
-    int num_blocks_dual;
-    int num_blocks_primal_dual;
     double objective_vector_norm;
     double constraint_bound_norm;
     double *constraint_lower_bound_finite_val;
@@ -210,6 +207,7 @@ typedef struct
     double dual_objective_value;
     double objective_gap;
     double relative_objective_gap;
+    double *infeasibility_dual_workspace; /* device [num_variables]; preserves the iteration dual_slack */
     double max_primal_ray_infeasibility;
     double max_dual_ray_infeasibility;
     double primal_ray_linear_objective;
@@ -223,15 +221,15 @@ typedef struct
     double last_trial_fixed_point_error;
     int inner_count;
 
-    cusparseHandle_t sparse_handle;
-    cublasHandle_t blas_handle;
+    pdhcg_device_sparse_t sparse_handle;
+    pdhcg_device_blas_t blas_handle;
 
     pdhcg_spmv_ctx_t *spmv_ctx_A;
     pdhcg_spmv_ctx_t *spmv_ctx_At;
-    cusparseDnVecDescr_t vec_primal_sol;
-    cusparseDnVecDescr_t vec_dual_sol;
-    cusparseDnVecDescr_t vec_primal_prod;
-    cusparseDnVecDescr_t vec_dual_prod;
+    pdhcg_device_vector_t vec_primal_sol;
+    pdhcg_device_vector_t vec_dual_sol;
+    pdhcg_device_vector_t vec_primal_prod;
+    pdhcg_device_vector_t vec_dual_prod;
 
     double *ones_primal;
     double *ones_dual;

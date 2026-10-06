@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
 /*
  * E2E tests for create_qp_problem covering the three supported cone types:
  *   Test 1: standard SOC, recovers (v, w, z) = (3, 4, 5).

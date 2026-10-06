@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """
 pdhcg core bindings (auto-detect dense/CSR/CSC/COO; initialize default params here)
 """

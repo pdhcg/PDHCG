@@ -17,7 +17,7 @@ limitations under the License.
 #ifndef SPMV_BACKEND_H
 #define SPMV_BACKEND_H
 
-#include <cusparse.h>
+#include "device_general_op.h"
 #include <stdbool.h>
 
 #ifdef __cplusplus
@@ -25,33 +25,23 @@ extern "C"
 {
 #endif
 
-    typedef struct
-    {
-        cusparseSpMatDescr_t mat;
-        cusparseDnVecDescr_t vec_x;
-        cusparseDnVecDescr_t vec_y;
-        void *buffer;
-        void *descr;
-        void *plan;
-        int num_rows;
-        int num_nonzeros;
-    } pdhcg_spmv_ctx_t;
+    typedef struct pdhcg_spmv_ctx pdhcg_spmv_ctx_t;
 
     bool pdhcg_use_spmvop_by_default(void);
 
-    pdhcg_spmv_ctx_t *pdhcg_spmv_ctx_create(cusparseHandle_t sparse_handle,
+    pdhcg_spmv_ctx_t *pdhcg_spmv_ctx_create(pdhcg_device_sparse_t sparse_handle,
                                             int num_rows,
                                             int num_cols,
                                             int num_nonzeros,
                                             int *row_ptr,
                                             int *col_ind,
                                             double *val,
-                                            cusparseDnVecDescr_t vec_x,
-                                            cusparseDnVecDescr_t vec_y);
+                                            pdhcg_device_vector_t vec_x,
+                                            pdhcg_device_vector_t vec_y);
 
     void pdhcg_spmv_ctx_destroy(pdhcg_spmv_ctx_t *ctx);
 
-    void pdhcg_spmv_execute(cusparseHandle_t sparse_handle,
+    void pdhcg_spmv_execute(pdhcg_device_sparse_t sparse_handle,
                             pdhcg_spmv_ctx_t *ctx,
                             const double *alpha,
                             const double *beta,

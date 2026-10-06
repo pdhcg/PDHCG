@@ -20,12 +20,16 @@ limitations under the License.
 #include "pdhcg_psd_cone.h"
 #include "utils.h"
 
-static_assert(CONE_ROTATED_SOC == 0 && CONE_STANDARD_SOC == 1 && CONE_EXPONENTIAL == 2 && CONE_POWER == 3 &&
-                  CONE_PSD == 4 && NUM_CONE_TYPES == 5,
-              "cone kernel dispatch must match cone_type_t");
-static_assert(PROJ_METHOD_THREAD == 0 && PROJ_METHOD_WARP == 1 && PROJ_METHOD_BLOCK == 2 && PROJ_METHOD_GRID == 3 &&
-                  PROJ_METHOD_GRID_WEIGHTED == 4 && NUM_PROJ_METHODS == 5,
-              "cone kernel dispatch must match cone_proj_method_t");
+/* C99 compile-time checks for the dispatch table indices. */
+typedef char cone_type_order_matches[(CONE_ROTATED_SOC == 0 && CONE_STANDARD_SOC == 1 && CONE_EXPONENTIAL == 2 &&
+                                      CONE_POWER == 3 && CONE_PSD == 4 && NUM_CONE_TYPES == 5)
+                                         ? 1
+                                         : -1];
+typedef char
+    cone_method_order_matches[(PROJ_METHOD_THREAD == 0 && PROJ_METHOD_WARP == 1 && PROJ_METHOD_BLOCK == 2 &&
+                               PROJ_METHOD_GRID == 3 && PROJ_METHOD_GRID_WEIGHTED == 4 && NUM_PROJ_METHODS == 5)
+                                  ? 1
+                                  : -1];
 
 static const cone_kernel_ops_t *const cone_kernel_ops_by_type[NUM_CONE_TYPES] = {
     &pdhcg_rsoc_cone_kernel_ops,
@@ -35,7 +39,7 @@ static const cone_kernel_ops_t *const cone_kernel_ops_by_type[NUM_CONE_TYPES] = 
     NULL,
 };
 
-void project_cone_runtime(pdhg_solver_state_t *state, cone_runtime_t *runtime, double *vector, double *warm_start)
+void project_cone_runtime(pdhg_solver_state_t *state, cone_runtime_t *runtime, double *vector, double *workspace)
 {
     const double *coordinate_rescaling =
         runtime->axis == CONE_AXIS_VARIABLE ? state->variable_rescaling : runtime->coordinate_rescaling;
@@ -45,7 +49,7 @@ void project_cone_runtime(pdhg_solver_state_t *state, cone_runtime_t *runtime, d
         const double *pa = runtime->power_alpha ? runtime->power_alpha + bk->offset : NULL;
         cone_kernel_ops_by_type[bk->type]->project[bk->method](vector,
                                                                coordinate_rescaling,
-                                                               warm_start + PDHCG_CONE_WORKSPACE_STRIDE * bk->offset,
+                                                               workspace + PDHCG_CONE_WORKSPACE_STRIDE * bk->offset,
                                                                runtime->start_idx + bk->offset,
                                                                runtime->v_dim + bk->offset,
                                                                pa,
@@ -73,7 +77,7 @@ void project_cone_runtime_diag_q(pdhg_solver_state_t *state, cone_runtime_t *run
                                                                       state->variable_rescaling,
                                                                       Q_diag,
                                                                       primal_step_size,
-                                                                      runtime->projection_warm_start +
+                                                                      runtime->projection_workspace +
                                                                           PDHCG_CONE_WORKSPACE_STRIDE * bk->offset,
                                                                       runtime->start_idx + bk->offset,
                                                                       runtime->v_dim + bk->offset,
@@ -89,7 +93,7 @@ void compute_cone_dual_residual(pdhg_solver_state_t *state, const double *effect
 {
     if (state->cones.num_blocks > 0)
     {
-        CUDA_CHECK(cudaMemsetAsync(
+        DEVICE_CHECK(pdhcg_device_zero_async(
             state->cones.complementarity_residual, 0, (size_t)state->cones.num_blocks * sizeof(double)));
     }
     for (int b = 0; b < state->cones.num_buckets; ++b)
@@ -102,7 +106,7 @@ void compute_cone_dual_residual(pdhg_solver_state_t *state, const double *effect
                                                                      state->dual_product,
                                                                      state->variable_rescaling,
                                                                      state->pdhg_primal_solution,
-                                                                     state->cones.residual_warm_start +
+                                                                     state->cones.residual_workspace +
                                                                          PDHCG_CONE_WORKSPACE_STRIDE * bk->offset,
                                                                      state->cones.start_idx + bk->offset,
                                                                      state->cones.v_dim + bk->offset,
