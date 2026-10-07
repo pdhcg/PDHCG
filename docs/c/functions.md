@@ -22,25 +22,29 @@ qp_problem_t *create_qp_problem(
 ```
 
 Creates a QP problem of the form
-`min 0.5 * x^T (Q + R^T D R) x + c^T x` subject to
+`min 0.5 * x^T (Q + R^T D R) x + c^T x + c0` subject to
 `con_lb <= A x <= con_ub`, `F x + affine_cone_offset in K`,
 `var_lb <= x <= var_ub`, and optional variable cone blocks. The affine cone
 blocks must be disjoint and cover every row of `F`.
+The [full Hessian must be positive semidefinite](../algorithm.md#standard-form).
+Matrix descriptors accept the [formats listed in Types](types.md#matrix-format).
+At least one of `A_desc`, `Q_desc`, `R_desc`, or `affine_cone_matrix_desc`
+must be provided to define the number of variables.
 
 **Parameters:**
 
 | Parameter | Description |
 |-----------|-------------|
-| `objective_c` | Linear objective coefficients (size n) |
-| `Q_desc` | Sparse quadratic matrix descriptor (can be NULL) |
-| `R_desc` | Low-rank factor descriptor, shape `k x n` (can be NULL) |
-| `D_desc` | Middle matrix in `R^T D R`, shape `k x k` (can be NULL). |
-| `A_desc` | Constraint matrix descriptor |
-| `con_lb` | Constraint lower bounds (size m) |
-| `con_ub` | Constraint upper bounds (size m) |
-| `var_lb` | Variable lower bounds (size n) |
-| `var_ub` | Variable upper bounds (size n) |
-| `objective_constant` | Constant term in objective (can be NULL) |
+| `objective_c` | Linear objective coefficients (size n); `NULL` means zero |
+| `Q_desc` | Quadratic matrix, shape `n x n`; `NULL` means zero |
+| `R_desc` | Low-rank factor, shape `k x n`; `NULL` omits the low-rank term |
+| `D_desc` | Middle matrix in `R^T D R`, shape `k x k`; `NULL` means identity. May be indefinite. |
+| `A_desc` | Scalar constraint matrix, shape `m x n`; `NULL` means no scalar rows |
+| `con_lb` | Constraint lower bounds (size m); `NULL` means `-INFINITY` |
+| `con_ub` | Constraint upper bounds (size m); `NULL` means `+INFINITY` |
+| `var_lb` | Variable lower bounds (size n); `NULL` means `-INFINITY` |
+| `var_ub` | Variable upper bounds (size n); `NULL` means `+INFINITY` |
+| `objective_constant` | Constant `c0`; `NULL` means zero |
 | `num_var_cones` | Number of variable cone blocks |
 | `var_cones` | Array of variable `cone_spec_t` descriptors, or NULL when the count is zero |
 | `affine_cone_matrix_desc` | Matrix `F` in the native affine cone constraint; NULL when no affine cones are present |
@@ -49,6 +53,8 @@ blocks must be disjoint and cover every row of `F`.
 | `affine_cones` | Array of affine `cone_spec_t` descriptors, or NULL when the count is zero |
 
 **Returns:** Pointer to allocated `qp_problem_t`, or NULL on error.
+The problem owns copies of its inputs; caller arrays may be released after
+creation. Free the problem with `qp_problem_free`.
 
 ---
 
@@ -62,7 +68,7 @@ void set_start_values(
 );
 ```
 
-Sets initial primal and dual solutions for warm starting. Passing `NULL` clears
+Copies initial primal and dual solutions for warm starting. Passing `NULL` clears
 the corresponding warm start, while values pinned by `set_cone_fixed` remain
 part of the model and are preserved.
 
@@ -90,9 +96,10 @@ int set_cone_fixed(
 );
 ```
 
-Pins one slot of cone `cone_idx` to `value`. Allocates the `is_fixed` flag array on first use and also writes `primal_start[start_idx + slot] = value` so the projection sees the constant. During preprocessing, that slot is also converted to equal lower and upper bounds. Typical use: fix the `y` slot of an exponential cone (e.g. Fisher-market entropy term with `y = 1`).
-
-Variable SOC, rotated-SOC, exponential, and power cones support every fixed-slot pattern whose intersection with the cone is nonempty. The solver validates the section before preprocessing and rejects empty or non-finite sections. Projection and stationarity residuals use the same weighted fixed-section operator, including diagonal quadratic objectives and large SOC/rotated-SOC blocks. `set_cone_fixed` rejects PSD blocks.
+Pins one variable-cone coordinate to a finite `value`, preserved across warm
+starts. Supports SOC, rotated SOC, exponential, and power cones; PSD blocks are
+rejected. The solver checks that the resulting fixed section is nonempty before
+preprocessing.
 
 **Parameters:**
 
@@ -103,7 +110,7 @@ Variable SOC, rotated-SOC, exponential, and power cones support every fixed-slot
 | `slot` | Slot offset within the cone (0-based) |
 | `value` | Fixed value |
 
-**Returns:** 0 on success, nonzero on error (bad indices or no cones).
+**Returns:** 0 on success, nonzero on error (invalid indices, unsupported cone, or non-finite value).
 
 ---
 
@@ -116,16 +123,19 @@ pdhcg_result_t *solve_qp_problem(
 );
 ```
 
-Solves the QP problem using the PDHCG algorithm.
+Solves the problem without modifying it. See [Devices](../devices.md) for
+backend selection and execution settings.
 
 **Parameters:**
 
 | Parameter | Description |
 |-----------|-------------|
 | `prob` | QP problem pointer |
-| `params` | Solver parameters |
+| `params` | Solver parameters, or `NULL` for defaults |
 
-**Returns:** Pointer to `pdhcg_result_t` containing solution information.
+**Returns:** Pointer to `pdhcg_result_t` containing solution information, or `NULL` on error.
+The result owns its solution arrays independently of the problem; release it
+with `pdhcg_result_free`.
 
 ---
 
@@ -139,11 +149,9 @@ pdhcg_result_t *solve_qp_problem_distributed(
 ```
 
 Solves the QP problem using the distributed multi-GPU PDHCG algorithm.
-
-!!! note "Availability"
-    Distributed execution requires `-DPDHCG_COMPILE_DISTRIBUTED=ON`. In a
-    non-distributed build the API remains available but returns `NULL` with an
-    explanatory error.
+The caller must initialize MPI with `MPI_Init` before this collective call;
+all ranks participate, and only rank 0 supplies the problem.
+See [Devices](../devices.md) for build and MPI execution requirements.
 
 **Parameters:**
 
@@ -153,6 +161,7 @@ Solves the QP problem using the distributed multi-GPU PDHCG algorithm.
 | `original_problem` | QP problem pointer (only required on rank 0; can be NULL on other ranks) |
 
 **Returns:** Pointer to `pdhcg_result_t` on rank 0. Other ranks return `NULL`.
+Returns `NULL` on error or when distributed support is unavailable.
 
 ---
 
@@ -182,7 +191,8 @@ int pdhcg_validate_parameters(
 );
 ```
 
-Validates solver parameter ranges. Returns `0` on success and nonzero on
+Validates solver parameter ranges and backend selection without starting a
+solve. Returns `0` on success and nonzero on
 failure. If `error_message` is non-`NULL` and its size is nonzero, the first
 validation error is written there.
 
@@ -194,7 +204,7 @@ validation error is written there.
 void pdhcg_result_free(pdhcg_result_t *results);
 ```
 
-Frees memory allocated for the result structure.
+Frees the result and its solution arrays. Accepts `NULL`.
 
 **Parameters:**
 
@@ -210,7 +220,7 @@ Frees memory allocated for the result structure.
 void qp_problem_free(qp_problem_t *prob);
 ```
 
-Frees memory allocated for the QP problem structure.
+Frees the problem and its owned data. Accepts `NULL`.
 
 **Parameters:**
 

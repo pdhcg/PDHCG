@@ -289,6 +289,7 @@ void set_default_parameters(pdhg_parameters_t *params)
     params->use_cone_preserving_scaling = true;
     params->verbose = 1;
     params->num_threads = 0;
+    params->device = NULL;
     params->termination_evaluation_frequency = 200;
     params->feasibility_polishing = false;
     params->reflection_coefficient = 1.0;

@@ -1,5 +1,5 @@
 site_name: PDHCG
-site_description: GPU-Accelerated Solver for Quadratic Conic Programming
+site_description: A Solver for Large-Scale Quadratic Conic Programming
 site_author: Hongpei Li
 site_url: https://lhongpei.github.io/PDHCG/
 exclude_docs: |
@@ -15,7 +15,9 @@ nav:
     - Overview: documentation/index.md
     - Getting started:
       - Installation: installation.md
+      - Devices: devices.md
       - Python quick start: python/quickstart.md
+      - Command line: cli.md
       - Examples: examples.md
     - Python API:
       - Model class: python/model.md
@@ -24,9 +26,8 @@ nav:
       - Overview: c/overview.md
       - Types: c/types.md
       - Functions: c/functions.md
-      - Combined reference: C_API.md
     - Migration:
-      - Migrating to 0.3: migration.md
+      - Migration guide: migration.md
   - Algorithm: algorithm.md
   - Citation: citation.md
 

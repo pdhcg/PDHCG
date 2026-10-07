@@ -18,6 +18,7 @@ limitations under the License.
 #pragma once
 
 #include "pdhcg_types.h"
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C"
@@ -52,7 +53,8 @@ extern "C"
 
     qp_problem_t *qcqp_to_socp_qp(const qp_problem_t *orig_qcqp, cone_type_t default_type);
 
-    // solve the LP problem using PDHG
+    /* Select a compiled backend with params->device; NULL or "auto" uses the
+       build's default. The problem may be reused across devices and solves. */
     pdhcg_result_t *solve_qp_problem(const qp_problem_t *prob, const pdhg_parameters_t *params);
 
     // solve the QP problem using distributed multi-GPU PDHG
@@ -60,6 +62,11 @@ extern "C"
 
     // parameter
     void set_default_parameters(pdhg_parameters_t *params);
+
+    /* Build metadata, available without initializing a device. Returned names
+       and arrays have static lifetime; count may be NULL. */
+    const char *pdhcg_get_default_device(void);
+    const char *const *pdhcg_get_built_devices(size_t *count);
 
     /* Return 0 when params are valid. On failure, return nonzero and write the
        first error to error_message when a nonempty buffer is provided. */

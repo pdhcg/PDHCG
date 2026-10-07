@@ -17,7 +17,7 @@ limitations under the License.
 
 /* Internal device contract. No vendor headers are allowed in this file.
  * CMake links one implementation into each backend library (PDHCG_DEVICES).
- * Multiple backend libraries may coexist; Python selects one per solve.
+ * The native entry point and Python select one backend per solve.
  * The solver owns the algorithm, while a device owns memory and numerical
  * execution. New devices implement this API, device_kernels.h, the cone launch
  * operations in cone_kernel_ops.h/device_cones.h, spmv_backend.h and the opaque

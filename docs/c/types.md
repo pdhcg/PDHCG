@@ -133,8 +133,7 @@ typedef enum {
 
 PSD `svec` stores the lower triangle in column-major order. Diagonal entries
 are unchanged and off-diagonal entries are multiplied by `sqrt(2)`.
-Distributed partitioning keeps each PSD block on one GPU and never splits its
-`svec` coordinates across devices.
+The exponential cone includes its closure: `y = 0`, `x <= 0`, `z >= 0`.
 
 ## Cone Spec
 
@@ -150,8 +149,7 @@ typedef struct {
 
 Input descriptor for a single cone block. In `var_cones`, `start_idx` indexes
 the variable vector; in `affine_cones`, it indexes rows of the separately
-supplied affine matrix `F`. The slot count is `v_dim + 2` for SOC/RSOC, `3`
-for exponential/power cones, and `v_dim * (v_dim + 1) / 2` for PSD cones.
+supplied affine matrix `F`. Slot lengths are listed under [Cone Type](#cone-type).
 Power cones require `power_alpha` in `(0,1)`. Variable non-PSD cones may
 provide an `is_fixed` array of `slot_count` bytes. Every mathematically
 nonempty fixed-slot pattern is supported for those cone types. PSD blocks do
@@ -213,6 +211,13 @@ typedef struct {
   double *constraint_upper_bound;
   double *affine_cone_offset;
   cone_blocks_t affine_cones;
+
+  int num_quadratic_constraints;
+  int *quadratic_constraint_row_indices;
+  CsrComponent **quadratic_constraint_matrices;
+  int *quadratic_constraint_matrix_num_nonzeros;
+  cone_blocks_t cones;
+  int num_original_variables;
 
   double *primal_start;
   double *dual_start;
@@ -328,13 +333,19 @@ typedef struct {
   inner_solver_parameters_t inner_solver_parameters;
   bool presolve;
   bool diag_jacobi_precond;
+  cone_type_t default_cone_type;
   partition_method_t partition_method;
   permute_method_t permute_method;
   grid_size_t grid_size;
   int permute_block_size;
   int num_threads;
+  const char *device;
 } pdhg_parameters_t;
 ```
+
+Initialize with `set_default_parameters`. The `device` string is borrowed and
+must remain valid until the solve returns. See [Devices](../devices.md) for
+execution settings.
 
 ## PDHCG Result
 

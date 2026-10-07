@@ -83,7 +83,7 @@ class _ParamsView:
 
 class Model:
     r"""
-    A class representing a quadratic programming (QP) model for PDHCG.
+    A quadratic or quadratic conic programming model for PDHCG.
 
     The quadratic programming problem is defined as:
 
@@ -91,6 +91,7 @@ class Model:
     minimize      1/2 x^T (Q + R^T D R) x + c^T x
     subject to    l_c <= A x <= u_c
                   F x + g in K
+                  x_J in K_v for variable-cone blocks J
                   l_v <= x <= u_v
     ```
 
@@ -105,10 +106,10 @@ class Model:
         - IterationLimit: Maximum number of iterations (default: INT_MAX)
         - OptimalityTol: Relative optimality tolerance (default: 1e-4)
         - FeasibilityTol: Relative feasibility tolerance (default: 1e-4)
-        - Presolve: Enable/disable presolve (default: True)
+        - Presolve: Enable/disable presolve (default: False)
         - RuizIters: Number of Ruiz rescaling iterations (default: 10)
         - NonDiagonalQuadraticMode: "inner" or "linearized" (default: "inner")
-        - LogLevel: Verbosity level 0-3 (default: 1)
+        - LogLevel: 0 for silent, 1 for summary, 2 for iteration details (default: 1)
 
         Use `model.Params["Presolve"] = False` to disable presolve.
     """
@@ -142,7 +143,8 @@ class Model:
             objective_matrix_low_rank: Low-rank quadratic coefficients of the objective (R).
             objective_matrix_low_rank_middle: Optional middle matrix D in Q + R^T D R.
                 Accepts a 1-D array of length `rank` (treated as diag(D)) or a
-                2-D `rank` x `rank` symmetric array. Defaults to identity.
+                2-D `rank` x `rank` symmetric array or SciPy sparse matrix.
+                Defaults to identity.
             variable_lower_bound: Lower bounds for the decision variables.
             variable_upper_bound: Upper bounds for the decision variables.
             objective_constant: Constant term in the objective function.
@@ -275,7 +277,7 @@ class Model:
     def read_file(cls, path: str) -> Model:
         """
         Read a problem file (.mps/.mps.gz/.cbf/.cbf.gz) and construct a Model.
-        Cones (SOC/RSOC/EXP/POWER) present in the file are preserved and passed
+        Cones (SOC/RSOC/EXP/POWER/PSD) present in the file are preserved and passed
         through to the solver.
         """
         raw = read_problem_file(path)
@@ -644,6 +646,11 @@ class Model:
     ) -> None:
         """
         Set warm start values for primal and/or dual solutions.
+
+        The primal vector has one entry per variable. The dual vector is ordered
+        as scalar-constraint rows followed by affine-cone rows. Passing None
+        clears that component. An incorrect dimension issues a RuntimeWarning
+        and leaves the existing component unchanged.
         """
         # set primal warm start
         if primal is not None:

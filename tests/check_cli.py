@@ -34,10 +34,12 @@ def run(binary, *args, expect_failure=False):
 
 def check_solution(
     binary, problem, output, expected_x, expected_objective,
-    *, infeasibility_tolerance=None,
+    *, infeasibility_tolerance=None, device=None,
 ):
     output.mkdir()
     options = [] if infeasibility_tolerance is None else ["--eps_infeasible", infeasibility_tolerance]
+    if device is not None:
+        options.extend(["--device", device])
     log = run(
         binary, "--verbose", "2", "--threads", "2", "--time_limit", "30",
         "--eps_opt", "1e-7", "--eps_feas", "1e-7", *options, problem, output,
@@ -83,9 +85,15 @@ def main():
     parser.add_argument("--binary", type=Path, required=True)
     binary = parser.parse_args().binary.resolve()
     assert run(binary, "--list-devices").splitlines() == [
-        "Built devices: cpu", "Default device: cpu", "Executable device: cpu",
+        "Built devices: cpu", "Default device: cpu",
     ]
     print("PASS CLI --list-devices", flush=True)
+    assert "--device <name>" in run(binary, "--help")
+    for device in ["unknown", "cuda"]:
+        log = run(binary, "--device", device, "unused.qps", "unused-output", expect_failure=True)
+        assert "Error:" in log and "device" in log and device in log, log
+        assert "Failed to read" not in log, log
+    print("PASS CLI device validation", flush=True)
     check_infeasibility_options(binary)
     with tempfile.TemporaryDirectory(prefix="pdhcg-cli-") as directory:
         root = Path(directory)
@@ -118,11 +126,11 @@ ENDATA
             stream.write(qp.read_bytes())
         check_solution(
             binary, compressed, root / "gzip", [1.5, 2.5], -4.5,
-            infeasibility_tolerance=0.0,
+            infeasibility_tolerance=0.0, device="cpu",
         )
         # The parser converts CBF's scalar-first SOC to PDHCG's (v, w, z) order.
         cbf = Path(__file__).parent / "data" / "cbf_q3_smoke.cbf"
-        check_solution(binary, cbf, root / "soc", [3.0, 4.0, 5.0], 5.0)
+        check_solution(binary, cbf, root / "soc", [3.0, 4.0, 5.0], 5.0, device="auto")
 
 
 if __name__ == "__main__":
