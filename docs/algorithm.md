@@ -42,10 +42,10 @@ $$
 
 Let $y$ be the dual variable for $Ax\in\mathcal B$, and let
 $z\in\mathcal K_a^*$ be the dual variable for $Fx+g\in\mathcal K_a$.
-The support function of $\mathcal B$ is
+For $\mathcal S\in\{\mathcal X,\mathcal B\}$, the support function is
 
 $$
-p_{\mathcal B}(s)=\sup_{w\in\mathcal B}\langle s,w\rangle,
+p_{\mathcal S}(s)=\sup_{w\in\mathcal S}\langle s,w\rangle,
 $$
 
 and the dual cone is
@@ -163,7 +163,7 @@ PDHCG uses safeguarded Barzilai–Borwein step lengths and stops when the inner
 accuracy target is reached or the inner iteration limit is met. The final
 inner iterate supplies $x^{k+1}$. Products are evaluated as
 $Hu=Qu+R^\top(D(Ru))$, preserving the sparse and low-rank representation.
-See [inner solver parameters](python/parameters.md#inner-solver-parameters)
+See [inner solver parameters](python/parameters.md#inner-solver)
 for accuracy and iteration controls.
 
 #### Linearized update
@@ -197,7 +197,7 @@ $$
 
 This update solves the modified proximal subproblem defined by the chosen
 metric. The implementation uses a safeguarded spectral estimate for $L$.
-[`NonDiagonalQuadraticMode`](python/parameters.md#algorithm-parameters)
+[`NonDiagonalQuadraticMode`](python/parameters.md#scaling-and-quadratic-updates)
 selects `inner` or `linearized` for non-diagonal quadratic objectives.
 
 After the primal update, form the extrapolated point for both dual updates:
@@ -235,6 +235,64 @@ $$
 Thus each base iteration combines a quadratic proximal solve, products with
 $A,A^\top,F,F^\top$, and projections onto the row bounds and cone blocks.
 
+## Cone-preserving scaling
+
+The default scaling broadcasts one positive scale over each variable or affine
+cone block $B$. From the candidate coordinate scales $d_j$, define
+
+$$
+d_{\max}=\max_{j\in B}d_j,\qquad
+d_{\mathrm{rms}}=\sqrt{\frac{1}{|B|}\sum_{j\in B}d_j^2}.
+$$
+
+| Scaling phase | Block size ≤ 8 | Block size > 8 |
+| --- | --- | --- |
+| Ruiz | $d_{\max}$ | $d_{\mathrm{rms}}$ |
+| Pock–Chambolle | $d_{\mathrm{rms}}$ | $\sqrt{d_{\max}d_{\mathrm{rms}}}$ |
+
+[`UseConePreservingScaling`](python/parameters.md#scaling-and-quadratic-updates) controls
+this aggregation. When it is disabled, PSD blocks retain cone-compatible
+scaling through $s_{ij}=d_i d_j$.
+
+## Infeasibility certificates
+
+PDHCG detects infeasibility by checking primal and dual certificate rays
+against the following systems.
+
+$$
+\mathcal Y=\{y:p_{\mathcal B}(-y)<+\infty\},\qquad
+\mathcal R=\{r:p_{\mathcal X}(r)<+\infty\}.
+$$
+
+### Primal infeasibility: dual ray
+
+$$
+\exists\,(y,z):\quad
+\begin{cases}
+y\in\mathcal Y,\quad z\in\mathcal K_a^*,\\[3pt]
+A^\top y+F^\top z\in\mathcal R,\\[3pt]
+-p_{\mathcal X}(A^\top y+F^\top z)-p_{\mathcal B}(-y)-g^\top z>0.
+\end{cases}
+$$
+
+### Dual infeasibility: primal ray
+
+$$
+\exists\,d:\quad
+\begin{cases}
+d\in\operatorname{rec}(\mathcal X),\\[3pt]
+Ad\in\operatorname{rec}(\mathcal B),\\[3pt]
+Fd\in\mathcal K_a,\\[3pt]
+c^\top d<0,\\[3pt]
+Hd=0.
+\end{cases}
+$$
+
+$$
+\operatorname{rec}(\mathcal S)
+=\{d:x+td\in\mathcal S\ \text{for all }x\in\mathcal S,\ t\ge0\}.
+$$
+
 ## References
 
 1. Hongpei Li, Yicheng Huang, Huikang Liu, Dongdong Ge, and Yinyu Ye.
@@ -243,5 +301,9 @@ $A,A^\top,F,F^\top$, and projections onto the row bounds and cone blocks.
 2. Yicheng Huang, Wanyu Zhang, Hongpei Li, Dongdong Ge, Huikang Liu, and Yinyu Ye.
     [*A Restarted Primal-Dual Hybrid Conjugate Gradient Method for Large-Scale Quadratic Programming*](https://pubsonline.informs.org/doi/10.1287/ijoc.2024.0983),
     *INFORMS Journal on Computing*, 2025.
+
+3. Hongpei Li, Yicheng Huang, Huikang Liu, Dongdong Ge, and Yinyu Ye.
+    [*PDHCG-II: An Enhanced Version of PDHCG for Large-Scale Convex QP*](https://arxiv.org/abs/2602.23967),
+    Section 5, 2026.
 
 For the recommended PDHCG citation and copyable BibTeX, see [Citation](citation.md).

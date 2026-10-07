@@ -1,34 +1,24 @@
-# Migrating to 0.3
+# Migration Guide
+
+## Migrating to 0.4
+
+- CPU and CUDA have independent implementations behind shared device interfaces.
+  All interfaces use the same native device selection; see [Devices](devices.md).
+- `eps_infeas_detect` has been removed. Use `eps_infeasible` in C and the CLI,
+  or [`InfeasibleTol`](python/parameters.md#termination-criteria) in Python.
+- Recompile C clients against the updated structures, and initialize parameters
+  with `set_default_parameters`.
+
+## Migrating to 0.3
 
 Version 0.3 adds quadratic conic models and changes the C and Python model
 construction APIs. This page covers the source changes needed by existing 0.2
 callers.
 
-## C API
+### C API
 
-`create_qp_problem` has six new trailing arguments:
-
-```c
-qp_problem_t *create_qp_problem(
-    const double *objective_c,
-    const matrix_desc_t *Q_desc,
-    const matrix_desc_t *R_desc,
-    const matrix_desc_t *D_desc,
-    const matrix_desc_t *A_desc,
-    const double *con_lb,
-    const double *con_ub,
-    const double *var_lb,
-    const double *var_ub,
-    const double *objective_constant,
-    int num_var_cones,
-    const cone_spec_t *var_cones,
-    const matrix_desc_t *affine_cone_matrix_desc,
-    const double *affine_cone_offset,
-    int num_affine_cones,
-    const cone_spec_t *affine_cones);
-```
-
-An existing QP with no cones only needs the six neutral arguments appended:
+[`create_qp_problem`](c/functions.md#create_qp_problem) has six new trailing
+arguments for variable and affine cones. Append neutral values for a plain QP:
 
 ```c
 qp_problem_t *problem = create_qp_problem(
@@ -36,11 +26,8 @@ qp_problem_t *problem = create_qp_problem(
     0, NULL, NULL, NULL, 0, NULL);
 ```
 
-For conic models, use `cone_spec_t` arrays as described in the
-[C API overview](c/overview.md). Variable-cone indices refer to variables;
-affine-cone indices refer to rows of the separately supplied
-`affine_cone_matrix_desc` (`F`), and `affine_cone_offset` has one entry per row
-of `F`. Affine cone blocks must cover every row of `F`.
+For conic inputs and coordinate conventions, see
+[`cone_spec_t`](c/types.md#cone-spec).
 
 `pdhcg_postsolve` now returns nonzero after a complete primal-dual recovery and
 zero when postsolve fails or full dual recovery is unavailable:
@@ -55,7 +42,7 @@ if (!pdhcg_postsolve(info, result, original_problem)) {
 their old binary layout. Recompile downstream code and initialize parameters
 through `set_default_parameters` before overriding individual fields.
 
-## Python API
+### Python API
 
 Cone metadata is now columnar. Replace a list of dictionaries with one
 `ConeSpec`:
@@ -75,20 +62,10 @@ cones = ConeSpec(
 Pass this object as `variable_cones` or `affine_cones` when constructing a
 `Model`. Legacy `list[dict]` inputs intentionally raise `TypeError`.
 
-CVXPY support is optional:
+CVXPY is an optional integration; see the
+[CVXPY quick start](python/quickstart.md#cvxpy).
 
-```bash
-pip install "pdhcg[cvxpy]"
-```
-
-Import the backend once before selecting PDHCG as the solver:
-
-```python
-import cvxpy as cp
-import pdhcg.cvxpy_backend  # Registers solver="PDHCG".
-```
-
-## Executable Location
+### Executable Location
 
 A source build places the command-line executable at `build/pdhcg`. Installed
 packages place it in the installation prefix's `bin` directory.

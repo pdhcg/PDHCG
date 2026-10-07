@@ -1,6 +1,6 @@
 ---
-title: A Scalable Solver for Convex Conic Quadratic Programming
-description: PDHCG is an open-source first-order solver for large-scale quadratic and conic programming, accelerated on one or multiple NVIDIA GPUs.
+title: A Solver for Large-Scale Quadratic Conic Programming
+description: PDHCG is an open-source first-order solver for large-scale quadratic conic programming.
 template: home.html
 hide:
   - navigation
@@ -10,9 +10,9 @@ hide:
 <section class="home-hero home-width" markdown>
 <div class="hero-copy" markdown>
 
-# <span class="hero-title-line">A Scalable Solver <span class="hero-title-for">for</span></span> <em class="hero-title-line">Convex Conic Quadratic Programming</em>
+# <span class="hero-title-line">A Solver <span class="hero-title-for">for</span></span> <em class="hero-title-line">Large-Scale Quadratic Conic Programming</em>
 
-<p class="hero-description">Open-source, GPU-accelerated optimization.</p>
+<p class="hero-description">An open-source first-order solver with hardware acceleration, including GPU and multi-GPU support.</p>
 
 <div class="hero-actions" markdown>
 
@@ -82,16 +82,16 @@ Sparse and low-rank structure, preserved from model to solution.
 </article>
 <article class="feature" markdown>
 
-### [Conic constraints](examples.md#conic-examples)
+### [Conic constraints](python/model.md#cone-constraints)
 
 Second-order, semidefinite, exponential, and power cones.
 
 </article>
 <article class="feature" markdown>
 
-### [Multi-GPU solving](installation.md#build-with-multi-gpu-support)
+### [Multiple Backends](devices.md)
 
-Scale the native solver with MPI and NCCL.
+Choose CPU or CUDA; scale across GPUs with MPI and NCCL.
 
 </article>
 </section>
@@ -101,7 +101,7 @@ Scale the native solver with MPI and NCCL.
 
 ## Start Now
 
-Use Python, CVXPY, or the command line. Requires NVIDIA CUDA 12.4+.
+Use Python, CVXPY, or the command line.
 
 [Installation & quick start →](installation.md){ .text-link }
 
@@ -128,7 +128,7 @@ Use Python, CVXPY, or the command line. Requires NVIDIA CUDA 12.4+.
 
 === "CVXPY"
 
-    Install with `pip install "pdhcg[cvxpy]"`.
+    Install the [CVXPY extra](installation.md#cvxpy).
 
     ```python
     import cvxpy as cp
@@ -148,18 +148,11 @@ Use Python, CVXPY, or the command line. Requires NVIDIA CUDA 12.4+.
 
 === "Command line"
 
+    [Build the native solver](installation.md#command-line-executable), then run:
+
     ```bash
-    # Build the native solver
-    git clone https://github.com/Lhongpei/PDHCG.git
-    cd PDHCG
-    cmake -S . -B build
-    cmake --build build --clean-first
-
-    # Solve your problem file
+    mkdir -p output
     ./build/pdhcg problem.qps ./output
-
-    # Accepts MPS, QPS, CBF, and gzip variants
-    ./build/pdhcg problem.cbf.gz ./output
     ```
 
 </div>

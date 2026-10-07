@@ -213,6 +213,8 @@ extern "C"
         grid_size_t grid_size;
         int permute_block_size;
         int num_threads;
+        /* Borrowed name: NULL or "auto" uses the build's default backend. */
+        const char *device;
     } pdhg_parameters_t;
 
     typedef struct

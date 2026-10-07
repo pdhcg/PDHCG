@@ -12,26 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# One extension per device, all built from the same binding source and C solver.
-# Imports are lazy, so CPU use does not load any CUDA libraries.
-set(PDHCG_PYTHON_DEVICES "")
-foreach(device IN LISTS PDHCG_DEVICES)
-    string(TOLOWER "${device}" suffix)
-    set(module _pdhcg_${suffix})
-    pybind11_add_module(${module} MODULE _core_bindings.cpp)
-    target_link_libraries(${module} PRIVATE pdhcg::${suffix})
-    target_include_directories(${module} PRIVATE "${PROJECT_SOURCE_DIR}/internal")
-    target_compile_definitions(${module} PRIVATE
-        PDHCG_PYTHON_MODULE=${module} PYBIND11_DETAILED_ERROR_MESSAGES=1)
-    # Prevent symbols from static dependencies from interposing on another
-    # backend even when Python extensions are imported with RTLD_GLOBAL.
-    if(UNIX AND NOT APPLE)
-        target_link_options(${module} PRIVATE "LINKER:--exclude-libs,ALL")
-    endif()
-    set_target_properties(${module} PROPERTIES INSTALL_RPATH "$ORIGIN/../lib")
-    install(TARGETS ${module} LIBRARY DESTINATION pdhcg RUNTIME DESTINATION pdhcg)
-    string(APPEND PDHCG_PYTHON_DEVICES "\"${suffix}\", ")
-endforeach()
-string(TOLOWER "${PDHCG_DEFAULT_DEVICE}" PDHCG_PYTHON_DEFAULT_DEVICE)
-configure_file(_build_config.py.in "${CMAKE_CURRENT_BINARY_DIR}/_build_config.py" @ONLY)
-install(FILES "${CMAKE_CURRENT_BINARY_DIR}/_build_config.py" DESTINATION pdhcg)
+# Python passes params.device to the same native entry point used by C clients.
+pybind11_add_module(_pdhcg_core MODULE _core_bindings.cpp)
+target_link_libraries(_pdhcg_core PRIVATE pdhcg::pdhcg)
+target_include_directories(_pdhcg_core PRIVATE "${PROJECT_SOURCE_DIR}/internal")
+target_compile_definitions(_pdhcg_core PRIVATE PYBIND11_DETAILED_ERROR_MESSAGES=1)
+if(UNIX AND NOT APPLE)
+    target_link_options(_pdhcg_core PRIVATE "LINKER:--exclude-libs,ALL")
+endif()
+set_target_properties(_pdhcg_core PROPERTIES INSTALL_RPATH "$ORIGIN/../lib")
+install(TARGETS _pdhcg_core LIBRARY DESTINATION pdhcg RUNTIME DESTINATION pdhcg)

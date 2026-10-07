@@ -20,7 +20,6 @@ limitations under the License.
 #include "pdhcg.h"
 #include "presolve_wrapper.h"
 #include "utils.h"
-#include "device_general_op.h"
 #include <getopt.h>
 #include <libgen.h>
 #include <stdbool.h>
@@ -35,9 +34,12 @@ limitations under the License.
 
 static void print_devices(void)
 {
-    printf("Built devices: %s\n", PDHCG_BUILT_DEVICES);
-    printf("Default device: %s\n", PDHCG_DEFAULT_DEVICE_NAME);
-    printf("Executable device: %s\n", pdhcg_device_name());
+    size_t count;
+    const char *const *devices = pdhcg_get_built_devices(&count);
+    printf("Built devices:");
+    for (size_t i = 0; i < count; ++i)
+        printf("%s%s", i == 0 ? " " : ", ", devices[i]);
+    printf("\nDefault device: %s\n", pdhcg_get_default_device());
 }
 
 char *get_output_path(const char *output_dir, const char *instance_name, const char *suffix)
@@ -171,14 +173,19 @@ void print_usage(const char *prog_name)
 
     fprintf(stderr, "Options:\n");
     fprintf(stderr, "  -h, --help               Display this help message.\n");
-    fprintf(stderr, "      --list-devices       Print build/default/executable devices and exit (standalone).\n");
+    fprintf(stderr, "      --list-devices       Print built/default devices and exit (standalone).\n");
+    fprintf(stderr, "      --device <name>      Backend: auto, cpu, or cuda (default: auto).\n");
     fprintf(stderr, "  -v, --verbose <int>      Verbosity level: 0=silent, 1=summary, 2=detailed (default: 1).\n");
     fprintf(stderr, "      --time_limit <sec>   Time limit in seconds (default: 3600.0).\n");
     fprintf(stderr, "      --iter_limit <int>   Iteration limit (default: %d).\n", INT32_MAX);
-    fprintf(stderr, "      --threads <int>      CPU OpenMP threads including caller; 0=runtime default (CUDA ignores).\n");
+    fprintf(stderr,
+            "      --threads <int>      CPU OpenMP threads including caller; 0=runtime default (CUDA ignores).\n");
     fprintf(stderr, "      --eps_opt <float>    Relative optimality tolerance (default: 1e-4).\n");
     fprintf(stderr, "      --eps_feas <float>   Relative feasibility tolerance (default: 1e-4).\n");
     fprintf(stderr, "      --eps_infeasible <float> Infeasibility certificate tolerance (default: 1e-10).\n");
+    fprintf(stderr, "  -f, --feasibility_polishing Enable feasibility polishing (default: disabled).\n");
+    fprintf(stderr, "      --eps_feas_polish <float> Relative feasibility polishing tolerance (default: 1e-6).\n");
+    fprintf(stderr, "      --presolve <0|1>     Enable PreFOS presolve when built (default: 0).\n");
     fprintf(stderr, "      --curtis_reid_iter   Iterations for Curtis-Reid scaling (default: 0, disabled).\n");
     fprintf(stderr, "      --l_inf_ruiz_iter    Iterations for L-inf Ruiz rescaling (default: 10).\n");
     fprintf(stderr, "      --no_pock_chambolle  Disable Pock-Chambolle rescaling (default: enabled).\n");
@@ -201,7 +208,8 @@ void print_usage(const char *prog_name)
     fprintf(
         stderr,
         "      --no_diag_precond    Disable Jacobi diagonal preconditioner for inner subproblem (default: enabled).\n");
-    fprintf(stderr, "      --soc_form <form>    QCQP cone formulation: 'rotated' or 'standard' (default: rotated).\n");
+    fprintf(stderr,
+            "      --soc_form <form>    QCQP SOC form: rotated or standard (default: rotated; single-rank only).\n");
 
 #ifdef PDHCG_COMPILE_DISTRIBUTED
     fprintf(stderr, "\nDistributed Options (MPI & NCCL):\n");
@@ -214,7 +222,6 @@ void print_usage(const char *prog_name)
 
 int run_pdhcg(int argc, char *argv[])
 {
-    pdhcg_device_initialize();
     pdhg_parameters_t params;
     set_default_parameters(&params);
 
@@ -248,6 +255,7 @@ int run_pdhcg(int argc, char *argv[])
                                            {"curtis_reid_iter", required_argument, 0, 1025},
                                            {"non_diagonal_quadratic_mode", required_argument, 0, 1026},
                                            {"threads", required_argument, 0, 1027},
+                                           {"device", required_argument, 0, 1028},
                                            {0, 0, 0, 0}};
 
     int opt;
@@ -359,6 +367,9 @@ int run_pdhcg(int argc, char *argv[])
             case 1027:
                 params.num_threads = atoi(optarg);
                 break;
+            case 1028:
+                params.device = optarg;
+                break;
             case 1026:
                 if (strcmp(optarg, "inner") == 0)
                     params.non_diagonal_quadratic_mode = NON_DIAGONAL_QUADRATIC_INNER;
@@ -405,6 +416,7 @@ int run_pdhcg(int argc, char *argv[])
     }
 
     pdhcg_result_t *result = solve_qp_problem(problem, &params);
+    int exit_status = result ? EXIT_SUCCESS : EXIT_FAILURE;
 
     if (result == NULL)
     {
@@ -422,7 +434,7 @@ int run_pdhcg(int argc, char *argv[])
     qp_problem_free(problem);
     free(instance_name);
 
-    return 0;
+    return exit_status;
 }
 
 #ifdef PDHCG_COMPILE_DISTRIBUTED
@@ -476,6 +488,7 @@ int run_d_pdhcg(int argc, char *argv[])
                                            {"curtis_reid_iter", required_argument, 0, 1025},
                                            {"non_diagonal_quadratic_mode", required_argument, 0, 1026},
                                            {"threads", required_argument, 0, 1027},
+                                           {"device", required_argument, 0, 1028},
                                            {"grid_size", required_argument, 0, 2001},
                                            {"partition_method", required_argument, 0, 2002},
                                            {"permute_method", required_argument, 0, 2003},
@@ -583,6 +596,9 @@ int run_d_pdhcg(int argc, char *argv[])
             case 1027:
                 params.num_threads = atoi(optarg);
                 break;
+            case 1028:
+                params.device = optarg;
+                break;
             case 1026:
                 if (strcmp(optarg, "inner") == 0)
                     params.non_diagonal_quadratic_mode = NON_DIAGONAL_QUADRATIC_INNER;
@@ -689,6 +705,17 @@ int run_d_pdhcg(int argc, char *argv[])
         return 1;
     }
 
+    const char *device = params.device;
+    if (device == NULL || strcmp(device, "auto") == 0)
+        device = pdhcg_get_default_device();
+    if (strcmp(device, "cuda") != 0)
+    {
+        if (rank_global == 0)
+            fprintf(stderr, "Error: Distributed solves require the cuda device.\n");
+        MPI_Finalize();
+        return EXIT_FAILURE;
+    }
+
     const char *filename = argv[optind];
     const char *output_dir = argv[optind + 1];
 
@@ -718,6 +745,8 @@ int run_d_pdhcg(int argc, char *argv[])
     }
 
     pdhcg_result_t *result = solve_qp_problem_distributed(&params, problem);
+    int exit_status = rank_global == 0 && result == NULL ? EXIT_FAILURE : EXIT_SUCCESS;
+    MPI_Bcast(&exit_status, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
     if (rank_global == 0)
     {
@@ -745,7 +774,7 @@ int run_d_pdhcg(int argc, char *argv[])
 
     free(instance_name);
     MPI_Finalize();
-    return 0;
+    return exit_status;
 }
 #endif // PDHCG_COMPILE_DISTRIBUTED
 

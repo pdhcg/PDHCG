@@ -15,6 +15,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+#include "backend.h"
 #include "cbf_parser.h"
 #include "cone_utils.h"
 #include "mps_parser.h"
@@ -24,10 +25,8 @@ limitations under the License.
 #include <csignal>
 #include <cstdint>
 #include <cstring>
-#include "device_general_op.h"
 #include <limits>
 #include <memory>
-#include <mutex>
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
@@ -37,15 +36,10 @@ limitations under the License.
 
 namespace py = pybind11;
 
-extern "C"
-{
-    extern volatile sig_atomic_t g_pdhcg_cancel_request;
-}
-
 void sigint_handler(int signum)
 {
     (void)signum;
-    g_pdhcg_cancel_request = 1;
+    pdhcg_set_cancel_request(1);
 }
 
 using QpProblemPtr = std::unique_ptr<qp_problem_t, decltype(&qp_problem_free)>;
@@ -54,12 +48,18 @@ using PdhcgResultPtr = std::unique_ptr<pdhcg_result_t, decltype(&pdhcg_result_fr
 class SigintHandlerGuard
 {
   public:
-    SigintHandlerGuard() : previous_(std::signal(SIGINT, sigint_handler))
+    SigintHandlerGuard()
     {
+        // The GIL protects guard entry/exit, including overlapping solves.
+        if (active_solves_++ == 0)
+        {
+            pdhcg_set_cancel_request(0);
+            previous_ = std::signal(SIGINT, sigint_handler);
+        }
     }
     ~SigintHandlerGuard()
     {
-        if (previous_ != SIG_ERR)
+        if (--active_solves_ == 0 && previous_ != SIG_ERR)
             std::signal(SIGINT, previous_);
     }
 
@@ -67,7 +67,8 @@ class SigintHandlerGuard
     SigintHandlerGuard &operator=(const SigintHandlerGuard &) = delete;
 
   private:
-    void (*previous_)(int);
+    inline static size_t active_solves_ = 0;
+    inline static void (*previous_)(int) = SIG_DFL;
 };
 
 // keepalive for numpy arrays
@@ -711,15 +712,25 @@ static py::dict solve_once(py::object Q,
                            py::object cones = py::none(),
                            py::object affine_F = py::none(),
                            py::object affine_g = py::none(),
-                           py::object affine_cones = py::none())
+                           py::object affine_cones = py::none(),
+                           py::object device = py::none())
 {
-    static std::once_flag device_init_flag;
-    std::call_once(device_init_flag, []() {
-        int status = pdhcg_device_initialize();
-        if (status != 0)
-            throw std::runtime_error(std::string("Could not initialize PDHCG device '") +
-                                     pdhcg_device_name() + "' (status " + std::to_string(status) + ")");
-    });
+    pdhg_parameters_t local_params;
+    set_default_parameters(&local_params);
+    std::string device_name;
+    if (!device.is_none())
+    {
+        if (!py::isinstance<py::str>(device))
+            throw py::type_error("device must be a backend name such as 'cpu' or 'cuda'");
+        device_name = py::cast<std::string>(device.attr("strip")().attr("lower")());
+        if (device_name.find('\0') != std::string::npos)
+            throw std::invalid_argument("device must not contain NUL characters");
+        local_params.device = device_name.c_str();
+    }
+    char error_message[256];
+    if (pdhcg_validate_parameters(&local_params, error_message, sizeof(error_message)) != 0)
+        throw std::invalid_argument(error_message);
+    parse_params_from_python(params, &local_params);
 
     PyMatrixView view_a, view_q, view_r, view_f;
     if (!A.is_none())
@@ -904,16 +915,12 @@ static py::dict solve_once(py::object Q,
         set_start_values(prob.get(), primal_ptr, dual_ptr);
     }
 
-    // parse PDHG params
-    pdhg_parameters_t local_params;
-    set_default_parameters(&local_params);
-    parse_params_from_python(params, &local_params);
     // solve (release GIL during compute)
     pdhcg_result_t *raw_result = nullptr;
-    g_pdhcg_cancel_request = 0;
 
     {
         SigintHandlerGuard signal_guard;
+        // Reacquire the GIL before the shared signal guard is destroyed.
         py::gil_scoped_release release;
         raw_result = solve_qp_problem(prob.get(), &local_params);
     }
@@ -921,7 +928,11 @@ static py::dict solve_once(py::object Q,
     PdhcgResultPtr res(raw_result, &pdhcg_result_free);
     if (!res)
     {
-        throw std::runtime_error("solve_qp_problem returned NULL.");
+        const char *selected = local_params.device;
+        if (selected == nullptr || device_name == "auto")
+            selected = pdhcg_get_default_device();
+        throw std::runtime_error(std::string("PDHCG device '") + selected +
+                                 "' failed to initialize or solve the problem.");
     }
 
     // parse result
@@ -1142,12 +1153,20 @@ static py::dict read_problem_file_py(const std::string &path)
     return out;
 }
 
-PYBIND11_MODULE(PDHCG_PYTHON_MODULE, m)
+PYBIND11_MODULE(_pdhcg_core, m)
 {
     m.doc() = "pdhcg core bindings (auto-detect dense/CSR/CSC/COO; initialize "
               "default params here)";
 
-    m.attr("device") = pdhcg_device_name();
+    m.def("built_devices", []() {
+        size_t count;
+        const char *const *devices = pdhcg_get_built_devices(&count);
+        py::tuple result(count);
+        for (size_t i = 0; i < count; ++i)
+            result[i] = py::str(devices[i]);
+        return result;
+    }, "Return the compiled device names");
+    m.def("default_device", &pdhcg_get_default_device, "Return the build's default device");
 
     m.def("get_default_params", &get_default_params_py, "Return default PDHG parameters as a dict");
     m.def("validate_params", &validate_params_py, py::arg("params"), "Validate a PDHG parameter dict");
@@ -1178,5 +1197,7 @@ PYBIND11_MODULE(PDHCG_PYTHON_MODULE, m)
           py::arg("cones") = py::none(),
           py::arg("affine_F") = py::none(),
           py::arg("affine_g") = py::none(),
-          py::arg("affine_cones") = py::none());
+          py::arg("affine_cones") = py::none(),
+          py::kw_only(),
+          py::arg("device") = py::none());
 }
