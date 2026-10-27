@@ -1,0 +1,21 @@
+{% extends "home.html" %}
+
+{% block extrahead %}
+  <meta property="og:title" content="PDHCG — From updates to convergence">
+  <meta property="og:description" content="Watch PDHG with and without Halpern converge on the same saddle, then explore the primal and dual updates.">
+  <link rel="stylesheet" href="{{ 'stylesheets/demo.css' | url }}">
+{% endblock %}
+
+{% block container %}
+<div class="pdhcg-home pdhcg-demo md-typeset" data-md-component="content">
+  <div class="demo-shell home-width" id="pdhcg-demo" data-view="compare">
+    {% include "partials/demo-interactive.html" %}
+    {{ page.content }}
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+  <script type="module" src="{{ 'javascripts/demo.js' | url }}"></script>
+{% endblock %}

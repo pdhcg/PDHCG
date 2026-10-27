@@ -23,6 +23,7 @@
       <div class="site-links">
         <a href="{{ 'documentation/' | url }}">Documentation</a>
         <a href="{{ 'algorithm/' | url }}">Algorithm</a>
+        <a href="{{ 'demo/' | url }}">Demo</a>
         <a href="{{ 'citation/' | url }}">Citation</a>
       </div>
     </div>
@@ -41,6 +42,9 @@
 {% block scripts %}
   {{ super() }}
   <script src="{{ 'javascripts/home.js' | url }}"></script>
+  {% if page.is_homepage %}
+    <script type="module" src="{{ 'javascripts/home-demo.js' | url }}"></script>
+  {% endif %}
 {% endblock %}
 
 {% block container %}

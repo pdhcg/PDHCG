@@ -61,6 +61,8 @@ test/*
 !test/*.c
 !test/*.cu
 !test/*.h
+!test/demo_saddle.test.mjs
+!test/demo_saddle_comparison.test.mjs
 /.vscode
 /.venv
 /_b

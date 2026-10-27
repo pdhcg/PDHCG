@@ -17,7 +17,7 @@ hide:
 <div class="hero-actions" markdown>
 
 [Get started](installation.md){ .home-button .home-button-primary }
-[Documentation →](documentation/index.md){ .home-button .home-button-secondary }
+[Try the demo →](demo.md){ .home-button .home-button-secondary }
 
 </div>
 
@@ -30,8 +30,16 @@ pip install pdhcg
 </div>
 </div>
 
-<figure class="hero-geometry">
-  <img src="assets/primal-dual-saddle.svg" alt="Illustrative convex-concave saddle for the primal-dual min-max formulation, with primal x and dual y cross sections." width="600" height="520" fetchpriority="high">
+<figure class="hero-geometry hero-demo" data-home-demo>
+  <a class="hero-demo-link" href="demo/" aria-label="Explore primal and dual updates and compare convergence in the interactive demo">
+    <div class="hero-demo-stage">
+      <img class="hero-demo-fallback" src="assets/primal-dual-saddle.svg" alt="Primal–dual saddle with primal x and dual y directions." width="600" height="520" fetchpriority="high">
+      <canvas id="home-demo-scene" tabindex="-1" aria-hidden="true"></canvas>
+    </div>
+    <div class="hero-demo-heading"><span class="hero-demo-status" id="home-demo-status">Demo preview</span><span class="hero-demo-open">Open demo <span aria-hidden="true">↗</span></span></div>
+    <div class="hero-demo-legend" aria-hidden="true"><span class="hero-demo-pdhg">PDHG</span><span class="hero-demo-halpern">+ Halpern</span></div>
+  </a>
+  <button class="hero-demo-toggle" id="home-demo-toggle" type="button" aria-label="Pause demo preview" title="Pause demo preview" hidden><span aria-hidden="true">Ⅱ</span></button>
 </figure>
 </section>
 

@@ -28,12 +28,13 @@ nav:
     - Migration:
       - Migrating to 0.3: migration.md
   - Algorithm: algorithm.md
+  - Demo: demo.md
   - Citation: citation.md
 
 theme:
   name: material
   custom_dir: docs/overrides
-  logo: assets/cg-mark.svg
+  logo: assets/pdhcg-logo.png
   favicon: assets/cg-mark.svg
   icon:
     repo: fontawesome/brands/github
