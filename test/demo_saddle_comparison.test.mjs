@@ -142,7 +142,11 @@ test('the shared story starts with the complete common primal and dual update be
 test('both paths begin continuously at the completed first candidate when the close-up returns',()=>{
   for(const options of presets){
     const comparison=createComparison(options),events=buildComparisonStory(comparison);
-    for(let i=1;i<events.length;i++)nearPoint(events[i-1].to,events[i].from);
+    for(let i=1;i<events.length;i++){
+      const previous=sampleComparisonStory(comparison,events,i-1e-8);
+      const next=sampleComparisonStory(comparison,events,i);
+      nearPoint(previous.point,next.point,1e-7);
+    }
     const before=sampleComparisonStory(comparison,events,events.introLength-1e-5);
     const after=sampleComparisonStory(comparison,events,events.introLength);
     nearPoint(before.point,after.point);nearPoint(after.point,after.comparison.point);

@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-import {makeSaddleProblem, solveSaddle} from './demo-saddle-solver.mjs';
 import {buildTimeline, buildInnerTimeline, buildDualTimeline, sampleTimeline} from './demo-saddle-timeline.mjs';
 import {SaddleScene} from './demo-saddle-scene.mjs';
 import {createComparison, buildComparisonStory, sampleComparisonStory} from './demo-saddle-comparison.mjs';
@@ -112,7 +111,6 @@ function initialize(){
       lastText=title+caption;$('stage-title').textContent=title;$('stage-caption').textContent=caption;
       $('scene').setAttribute('aria-label',`${primal?'Inner primal subproblem':dual?'Dual subproblem':'Outer primal–dual iteration'}. ${title}. ${caption} Drag or use arrow keys to rotate the outer view. R resets the view.`);
     }
-    root.querySelectorAll('[data-phase]').forEach(b=>{b.disabled=inside;b.setAttribute('aria-pressed',String(!inside&&state.mode==='detail'&&b.dataset.phase===(state.stage===1?'dual':'pdhg')));});
     root.dataset.innerPart=inside?state.part:'';
     state.animateCamera=playing||stepTarget!==null;
     if(view==='compare')state.comparisonBounds=comparison.halpern.result;
@@ -132,9 +130,7 @@ function initialize(){
     const entry=innerEvents[0];
     if(!reduced.matches&&Math.hypot(...before.map((v,i)=>v-entry.from[i]))>1e-8){
       innerEvents.unshift({...entry,part:'revisit',from:[...before],to:[...entry.from],duration:450,
-        localTo:0,liftTo:0,blendTo:0,dualTo:0,detail:`Revisit this ${scope==='dual'?'dual':'primal'} update`});
-      const total=innerEvents.reduce((sum,e)=>sum+e.duration,0);let elapsed=0;
-      for(const e of innerEvents){e.phaseOffset=elapsed;e.phaseDuration=total;elapsed+=e.duration;}
+        localTo:0,liftTo:0,blendTo:0,dualTo:0});
     }
     stepTarget=null;lastText='';render();
   }
@@ -163,7 +159,8 @@ function initialize(){
     try{
       comparison=createComparison(presets[$('example').value]);comparisonEvents=buildComparisonStory(comparison);
       compareCursor=reduced.matches?comparisonEvents.length:0;
-      p=makeSaddleProblem({...presets[$('example').value],halpern:$('halpern').checked});result=solveSaddle(p);outerEvents=buildTimeline(p,result);
+      ({problem:p,result}=comparison[$('halpern').checked?'halpern':'baseline']);
+      outerEvents=buildTimeline(p,result);
       innerEvents=null;outerCursor=0;lastText='';
       $('timeline').max=String(mainEvents().length);$('timeline').step='0.001';
       const coefficient=p.q===1?'½':Number((p.q/2).toPrecision(5));
@@ -224,19 +221,13 @@ function initialize(){
     }
     if(reduced.matches){finishInner();render();return;}
     // Finish this solve and reverse the same spatial transition, even if the
-    // reader returns halfway through a trial or a projection.
+    // reader returns halfway through a gradient step or a projection.
     const exit=innerEvents.at(-1),settle={...exit,part:'settle',from:[...state.point],to:[state.r.xp,dual?state.r.yp:state.r.y],
       duration:500,localFrom:state.localOpacity,localTo:dual?0:1,liftFrom:state.lift,liftTo:dual?0:1,
-      blendFrom:state.innerBlend,blendTo:dual?0:1,dualFrom:state.dualBlend||0,dualTo:dual?1:0,
-      phaseOffset:0,phaseDuration:500+exit.duration};
-    innerEvents=[settle,{...exit,phaseOffset:500,phaseDuration:500+exit.duration}];innerEvents.scope=state.scope;innerEvents.status='solved';innerCursor=0;start();
+      blendFrom:state.innerBlend,blendTo:dual?0:1,dualFrom:state.dualBlend||0,dualTo:dual?1:0};
+    innerEvents=[settle,exit];innerEvents.scope=state.scope;innerEvents.status='solved';innerCursor=0;start();
   }
   $('return').addEventListener('click',returnOuter);$('outer').addEventListener('click',returnOuter);
-  root.querySelectorAll('[data-phase]').forEach(b=>b.addEventListener('click',()=>{
-    pause();const part=b.dataset.phase==='dual'?'dual':'primal';
-    const index=mainEvents().findIndex(e=>e.part===part);
-    innerEvents=null;setMainCursor(Math.max(0,index));render();
-  }));
   scene.onViewChange=({magnification,overview})=>{
     const scale=Number(magnification.toPrecision(3)).toLocaleString('en-US');
     const label=overview?'Full trajectory':`Local view · ${scale}×`;

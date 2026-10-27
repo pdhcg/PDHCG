@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {makeSaddleProblem, solveSaddle, objective, lagrangian, localPrimal, localDual,
-  saddleMetrics, pythonExample, projectBox} from '../docs/javascripts/demo-saddle-solver.mjs';
+  saddleMetrics, projectBox} from '../docs/javascripts/demo-saddle-solver.mjs';
 import {buildTimeline, buildInnerTimeline, buildDualTimeline, sampleTimeline} from '../docs/javascripts/demo-saddle-timeline.mjs';
 
 const near = (a, b, tol = 1e-10) => assert.ok(Math.abs(a - b) <= tol, `${a} differs from ${b}`);
@@ -136,23 +136,13 @@ test('inequality and equality modes converge to independent KKT solutions', () =
   }
 });
 
-test('limits, feasibility and invalid inputs are checked, and native export includes the correct row cone', () => {
+test('limits, feasibility and invalid inputs are checked', () => {
   assert.equal(solveSaddle(makeSaddleProblem(),{limit:1}).status,'iteration-limit');
   for(const options of [{q:0},{q:NaN},{a:Infinity},{tau:1,sigma:1},{sigma:-1},
     {initial:[0]},{initial:[0,NaN]},{lower:1,upper:0},{lower:0,b:-1},{b:7},
     {constraint:'unknown'},{halpern:'false'},{innerInitialScale:0}])
     assert.throws(()=>makeSaddleProblem(options));
   assert.throws(()=>solveSaddle(makeSaddleProblem(),{limit:0}));
-  for(const options of [{},boundary]){
-    const p=makeSaddleProblem(options),code=pythonExample(p);
-    assert.ok(code.includes('objective_matrix_low_rank=np.array([[np.sqrt(q)]])'));
-    assert.ok(code.includes('constraint_matrix=sparse.csc_matrix([[-1.]])'));
-    assert.ok(code.includes('constraint_lower_bound=np.array([-b])'));
-    assert.ok(code.includes(`constraint_upper_bound=np.array([${p.constraint==='equality'?'-b':'np.inf'}])`));
-    assert.ok(code.includes('variable_lower_bound=np.array([lower])'));
-    assert.ok(code.includes('variable_upper_bound=np.array([upper])'));
-    assert.match(code,/DiagJacobiPrecond=False/);assert.match(code,/CPU reference, not a GPU run/);
-  }
 });
 
 test('the main story automatically expands primal and dual, then follows real candidates without jumps', () => {
@@ -191,9 +181,9 @@ test('the main story automatically expands primal and dual, then follows real ca
     const segments=events.filter(e=>e.mode==='trajectory');
     assert.ok(segments.at(-1).duration<segments[0].duration,'Small late steps should play faster');
     assert.ok(events.reduce((sum,e)=>sum+e.duration,0)<30000);
-    assert.equal(sampleTimeline(events,1).phaseProgress,0,'Inner phase starts independently of the outer call');
+    near(sampleTimeline(events,1).innerBlend,0);
     near(sampleTimeline(events,dualIndex).innerBlend,0);
-    near(sampleTimeline(events,dualIndex+1).phaseProgress,0);
+    near(sampleTimeline(events,dualIndex+1).dualBlend,0);
     near(sampleTimeline(events,trajectoryIndex).dualBlend,0);
   }
 });
@@ -268,7 +258,6 @@ test('trajectory sampling is linear and continuous while detail and inner sampli
       nearPoint(middle.point,e.from.map((v,j)=>(v+e.to[j])/2));
       near(middle.lift,(e.liftFrom+e.liftTo)/2);near(middle.innerBlend,(e.blendFrom+e.blendTo)/2);
       near(middle.dualBlend,(e.dualFrom+e.dualTo)/2);
-      assert.ok(middle.phaseProgress>=0&&middle.phaseProgress<=1);
       nearPoint(middle.motionPath.at(-1),middle.point);
     }
     assert.equal(sampleTimeline(events,-1).cursor,0);assert.equal(sampleTimeline(events,NaN).cursor,0);
@@ -296,7 +285,7 @@ test('the animation hides Halpern constructions without changing any solver reco
     assert.notEqual(e.part,'halpern');assert.notEqual(e.part,'restart');
     for(const t of [.05,.25,.5,.75,.95]){
       const state=sampleTimeline(events,i+t);
-      assert.equal(state.halpernPhase,null);assert.equal(state.mode,e.mode);
+      assert.equal(state.mode,e.mode);
       nearPoint(state.motionPath.at(-1),state.point);
     }
   });

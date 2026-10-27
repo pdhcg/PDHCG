@@ -111,32 +111,3 @@ export function solveSaddle(p, {limit = 1000, tolerance = 1e-6} = {}) {
   }
   return {records, status: 'iteration-limit', tolerance};
 }
-
-export function pythonExample(p) {
-  return `import numpy as np
-from scipy import sparse
-from pdhcg import Model
-
-q, a, b = ${p.q}, ${p.a}, ${p.b}
-lower, upper = ${p.lower}, ${p.upper}
-# min 0.5*q*(x-a)**2, subject to ${p.constraint === 'equality' ? 'x=b (free dual multiplier).' : 'b-x in the nonnegative cone.'}
-# R.T @ R = q retains the low-rank BB path in native PDHCG.
-model = Model(
-    objective_vector=np.array([-q*a]),
-    objective_matrix_low_rank=np.array([[np.sqrt(q)]]),
-    objective_constant=0.5*q*a*a,
-    constraint_matrix=sparse.csc_matrix([[-1.]]),
-    constraint_lower_bound=np.array([-b]),
-    constraint_upper_bound=np.array([${p.constraint === 'equality' ? '-b' : 'np.inf'}]),
-    variable_lower_bound=np.array([lower]),
-    variable_upper_bound=np.array([upper]),
-)
-model.setParams(NonDiagonalQuadraticMode="inner", DiagJacobiPrecond=False, LogLevel=2)
-model.optimize()
-print("Solution:", model.X)
-print("Objective:", model.ObjVal)
-# Same problem; the browser uses ${p.halpern ? 'reflected Halpern' : 'plain PDHG'} with fixed steps and BB alpha0=${p.innerInitialScale}*tau.
-# Native scaling, algorithm defaults, restart and inner stopping settings can
-# change the trajectory. The browser trace is a CPU reference, not a GPU run.
-`;
-}

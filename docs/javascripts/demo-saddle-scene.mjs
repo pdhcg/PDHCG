@@ -8,7 +8,7 @@ export class SaddleScene {
   constructor(canvas,{compact=false}={}){
     this.canvas=canvas;this.ctx=canvas.getContext('2d');this.model=null;this.problem=null;
     this.compact=compact;
-    this.yaw=-1.75;this.pitch=1.06;this.zoom=1;this.manual=false;this.overview=true;this.viewWindow=null;
+    this.yaw=-1.75;this.pitch=1.06;this.zoom=1;this.overview=true;this.viewWindow=null;
     this.renderer=new T.WebGLRenderer({alpha:true,antialias:true,powerPreference:'low-power'});
     this.renderer.setClearColor(0,0);this.renderer.setPixelRatio(Math.min(devicePixelRatio,2));
     this.renderer.domElement.className='demo-webgl';
@@ -23,22 +23,22 @@ export class SaddleScene {
     this.observer=new ResizeObserver(()=>this.draw());this.observer.observe(canvas);
     new MutationObserver(()=>{this.setTheme();this.draw();}).observe(document.body,{attributes:true,attributeFilter:['data-md-color-scheme']});
     let drag=null;
-    canvas.addEventListener('pointerdown',e=>{if(['inner','dual'].includes(this.model?.scope))return;drag={id:e.pointerId,x:e.clientX,y:e.clientY};this.manual=true;canvas.setPointerCapture(e.pointerId);canvas.focus({preventScroll:true});});
+    canvas.addEventListener('pointerdown',e=>{if(['inner','dual'].includes(this.model?.scope))return;drag={id:e.pointerId,x:e.clientX,y:e.clientY};canvas.setPointerCapture(e.pointerId);canvas.focus({preventScroll:true});});
     canvas.addEventListener('pointermove',e=>{if(drag?.id!==e.pointerId)return;this.yaw-=(e.clientX-drag.x)*.007;this.pitch=clamp(this.pitch+(e.clientY-drag.y)*.005,.23,1.3);drag.x=e.clientX;drag.y=e.clientY;this.viewWindow=null;this.draw();});
     const end=e=>{if(drag?.id===e.pointerId){drag=null;if(canvas.hasPointerCapture(e.pointerId))canvas.releasePointerCapture(e.pointerId);}};
     canvas.addEventListener('pointerup',end);canvas.addEventListener('pointercancel',end);
-    canvas.addEventListener('wheel',e=>{if(['inner','dual'].includes(this.model?.scope))return;if(!e.ctrlKey&&!e.metaKey)return;e.preventDefault();this.manual=true;this.zoom=clamp(this.zoom*Math.exp(-e.deltaY*.002),.7,1.6);this.viewWindow=null;this.draw();},{passive:false});
+    canvas.addEventListener('wheel',e=>{if(['inner','dual'].includes(this.model?.scope))return;if(!e.ctrlKey&&!e.metaKey)return;e.preventDefault();this.zoom=clamp(this.zoom*Math.exp(-e.deltaY*.002),.7,1.6);this.viewWindow=null;this.draw();},{passive:false});
     canvas.addEventListener('keydown',e=>{
       if(!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','r','R'].includes(e.key))return;
       if(['inner','dual'].includes(this.model?.scope)&&e.key.toLowerCase()!=='r')return;
-      e.preventDefault();e.stopPropagation();this.manual=true;
+      e.preventDefault();e.stopPropagation();
       if(e.key==='ArrowLeft')this.yaw+=.12;if(e.key==='ArrowRight')this.yaw-=.12;
       if(e.key==='ArrowUp')this.pitch=clamp(this.pitch+.1,.23,1.3);if(e.key==='ArrowDown')this.pitch=clamp(this.pitch-.1,.23,1.3);
       if(e.key.toLowerCase()==='r')this.reset();else{this.viewWindow=null;this.draw();}
     });
     this.setTheme();
   }
-  reset(){this.yaw=-1.75;this.pitch=1.06;this.zoom=1;this.manual=false;this.overview=true;this.viewWindow=null;this.draw();}
+  reset(){this.yaw=-1.75;this.pitch=1.06;this.zoom=1;this.overview=true;this.viewWindow=null;this.draw();}
   toggleOverview(){this.overview=!this.overview;this.viewWindow=null;this.draw();}
   setTheme(){
     const dark=document.body.dataset.mdColorScheme==='slate';this.dark=dark;
@@ -73,8 +73,6 @@ export class SaddleScene {
     if(this.surface){this.scene.remove(this.surface);this.surface.geometry.dispose();this.surface.material.dispose();}
     this.surface=new T.Mesh(geometry,new T.MeshPhongMaterial({color:'#6aadb7',specular:'#173b42',shininess:8,side:T.DoubleSide,transparent:true,opacity:.55,depthWrite:false}));
     this.scene.add(this.surface);this.setTheme();this.viewWindow=null;this.overview=true;
-    const heights=positions.filter((_,i)=>i%3===2);this.floor=Math.min(...heights)-.15;
-    this.top=Math.max(...heights);this.extent=Math.max(this.rx,this.ry,(this.top-this.floor)*.6);
     // Fit the trajectory itself, not the decorative surface or its floor.
     this.fitPoints=all.map(xy=>new T.Vector3(...xy,lagrangian(p,...xy)*this.scaleZ));
   }
@@ -124,7 +122,7 @@ export class SaddleScene {
     if(m.mode==='detail')localPoints.push([r.x,r.y],[r.xp,r.y]);
     const lo=[0,1].map(i=>Math.min(...localPoints.map(v=>v[i]))),hi=[0,1].map(i=>Math.max(...localPoints.map(v=>v[i])));
     const localSpan=Math.max(1e-8,hi[0]-lo[0],hi[1]-lo[1]);
-    this.localBounds={lo:[0,1].map(i=>Math.min(...localPoints.map(v=>v[i]))),hi:[0,1].map(i=>Math.max(...localPoints.map(v=>v[i])))};
+    this.localBounds={lo,hi};
     const vertices=localPoints.flatMap(xy=>[
       new T.Vector3(...xy,lagrangian(p,...xy)*this.scaleZ),
       new T.Vector3(...xy,lagrangian(p,r.xp,r.yp)*this.scaleZ)]);
@@ -191,7 +189,6 @@ export class SaddleScene {
       if(label)labels.push({p:q,text:label,color,dx:12,dy:-13});
     };
     const textAt=(v,text,color,dx=10,dy=0)=>{const q=P(v);if(visible(q))labels.push({p:q,text,color,dx,dy});};
-    const xlo=this.center[0]-this.rx,xhi=this.center[0]+this.rx,ylo=this.center[1]-this.ry,yhi=this.center[1]+this.ry;
     if(outer>.01){
       // The full view stays fixed so the complete convergence path remains visible.
       if(this.magnification<2){

@@ -1,5 +1,5 @@
 import {makeSaddleProblem, solveSaddle} from './demo-saddle-solver.mjs';
-import {buildTimeline, sampleTimeline} from './demo-saddle-timeline.mjs';
+import {buildIntroTimeline, sampleTimeline} from './demo-saddle-timeline.mjs';
 
 // Both methods solve the same problem from the same starting point. A shared
 // cursor counts outer updates, never a separately normalized animation time.
@@ -31,11 +31,7 @@ function sampleRun(run, cursor) {
     title: problem.halpern ? 'PDHG + Halpern · primal–dual trajectory' : 'PDHG · primal–dual trajectory',
     caption: 'Both methods advance at the same outer iteration count.',
     from, to, point, motionPath: done ? [point] : [from, point],
-    lift: 0, localOpacity: 0, innerBlend: 0, dualBlend: 0,
-    localFrom: 0, localTo: 0, liftFrom: 0, liftTo: 0,
-    blendFrom: 0, blendTo: 0, dualFrom: 0, dualTo: 0,
-    eventProgress: progress, easedProgress: progress, phaseProgress: progress,
-    halpernPhase: null, substepProgress: progress, anchorWeight: 1 - r.theta};
+    lift: 0, localOpacity: 0, innerBlend: 0, dualBlend: 0};
 }
 
 // Integer k is the kth computed primal-dual candidate (xp, yp). Fractional
@@ -52,16 +48,13 @@ export function sampleComparison(comparison, cursor = 0) {
 // With theta=1/2, the first reflected Halpern update is the same candidate as
 // plain PDHG; the first iteration can therefore be shown once for both runs.
 export function buildComparisonStory(comparison) {
-  const firstRun = buildTimeline(comparison.baseline.problem, comparison.baseline.result);
-  const firstTrajectory = firstRun.findIndex(e => e.mode === 'trajectory');
-  const events = firstRun.slice(0, firstTrajectory < 0 ? firstRun.length : firstTrajectory);
+  const events = buildIntroTimeline(comparison.baseline.problem, comparison.baseline.result.records[0]);
   events.introLength = events.length;
   events.scope = 'outer';
   events.status = comparison.baseline.result.status;
   for (let k = 1; k < comparison.iterations; k++) {
     const duration = 1000 / Math.min(45, 5 + 0.16 * k);
-    events.push({...sampleComparison(comparison, k), duration,
-      phaseOffset: 0, phaseDuration: duration});
+    events.push({mode: 'trajectory', duration});
   }
   return events;
 }
