@@ -43,14 +43,24 @@ extern "C"
     DEVICE_CHECK(pdhcg_device_allocate((void **)&dest, bytes));                                                        \
     DEVICE_CHECK(pdhcg_device_copy(dest, src, bytes, PDHCG_COPY_HOST_TO_DEVICE));
 
-#define ALLOC_AND_COPY_CSR(dest_csr, src_csr, n_rows, nnz)                                                             \
+#define ALLOC_AND_COPY_DEVICE(dest, src, bytes)                                                                        \
+    DEVICE_CHECK(pdhcg_device_allocate((void **)&dest, bytes));                                                        \
+    DEVICE_CHECK(pdhcg_device_copy(dest, src, bytes, PDHCG_COPY_DEVICE_TO_DEVICE));
+
+#define ALLOC_AND_COPY_DEVICE_CSR(dest_csr, src_csr, n_rows, nnz)                                                      \
     do                                                                                                                 \
     {                                                                                                                  \
-        ALLOC_AND_COPY((dest_csr)->row_ptr, (src_csr)->row_ptr, ((n_rows) + 1) * sizeof(int));                         \
-                                                                                                                       \
-        ALLOC_AND_COPY((dest_csr)->col_ind, (src_csr)->col_ind, (nnz) * sizeof(int));                                  \
-                                                                                                                       \
-        ALLOC_AND_COPY((dest_csr)->val, (src_csr)->val, (nnz) * sizeof(double));                                       \
+        if ((src_csr) && (src_csr)->row_ptr)                                                                           \
+        {                                                                                                              \
+            ALLOC_AND_COPY_DEVICE((dest_csr)->row_ptr, (src_csr)->row_ptr, ((size_t)(n_rows) + 1) * sizeof(int));      \
+        }                                                                                                              \
+        else                                                                                                           \
+        {                                                                                                              \
+            ALLOC_ZERO((dest_csr)->row_ptr, ((size_t)(n_rows) + 1) * sizeof(int));                                     \
+        }                                                                                                              \
+        ALLOC_AND_COPY_DEVICE(                                                                                         \
+            (dest_csr)->col_ind, (src_csr) ? (src_csr)->col_ind : NULL, (size_t)(nnz) * sizeof(int));                  \
+        ALLOC_AND_COPY_DEVICE((dest_csr)->val, (src_csr) ? (src_csr)->val : NULL, (size_t)(nnz) * sizeof(double));     \
     } while (0)
 
 #define ALLOC_ZERO(dest, bytes)                                                                                        \
@@ -60,11 +70,15 @@ extern "C"
     extern const double HOST_ONE;
     extern const double HOST_ZERO;
 
+    double monotonic_time_seconds(void);
+
     void *safe_malloc(size_t size);
 
     void *safe_calloc(size_t num, size_t size);
 
     void *safe_realloc(void *ptr, size_t new_size);
+
+    void free_device_csr(device_sparse_matrix_csr_t *matrix);
 
     qp_problem_t *deepcopy_problem(const qp_problem_t *prob);
 

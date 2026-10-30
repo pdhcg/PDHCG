@@ -20,7 +20,7 @@ limitations under the License.
 #include "internal_types.h"
 #include "pdhcg.h"
 #include "pdhcg_types.h"
-#include "preconditioner.h"
+#include "preprocess.h"
 #include "solver.h"
 #include "utils.h"
 
@@ -32,13 +32,13 @@ extern "C"
     int get_n_start(grid_context_t *ctx);
     void initialize_step_size_and_primal_weight(pdhg_solver_state_t *state, const pdhg_parameters_t *params);
 
+    /* Preprocess device_problem, create state storage, then scale it in place. */
     pdhg_solver_state_t *initialize_solver_state(const pdhg_parameters_t *params,
                                                  const qp_problem_t *working_problem,
-                                                 const rescale_info_t *rescale_info,
+                                                 const qp_problem_t *device_problem,
                                                  grid_context_t *grid_context);
 
     void pdhg_solver_state_free(pdhg_solver_state_t *state);
-    void rescale_info_free(rescale_info_t *info);
 
 #ifdef __cplusplus
 }

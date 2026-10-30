@@ -16,10 +16,9 @@ limitations under the License.
 
 #include "distributed_conic.h"
 
-void initialize_split_cones(pdhg_solver_state_t *state, const rescale_info_t *rescale_info)
+void initialize_split_cones(pdhg_solver_state_t *state)
 {
     (void)state;
-    (void)rescale_info;
 }
 
 void initialize_split_cone_infeasibility_type(const pdhg_solver_state_t *state, unsigned char *host_type)

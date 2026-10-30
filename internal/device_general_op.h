@@ -20,7 +20,7 @@ limitations under the License.
  * The native entry point and Python select one backend per solve.
  * The solver owns the algorithm, while a device owns memory and numerical
  * execution. New devices implement this API, device_kernels.h, the cone launch
- * operations in cone_kernel_ops.h/device_cones.h, spmv_backend.h and the opaque
+ * operations in cone_kernel_ops.h/device_cones.h, device_scaling.h, spmv_backend.h and the opaque
  * PSD runtime. Each backend owns its kernel and projection implementations.
  * Buffers belong to the selected device and must not be dereferenced by the
  * shared solver. Copy directions are explicit even when CPU storage is shared.
@@ -106,8 +106,8 @@ extern "C"
     int pdhcg_device_vector_create(pdhcg_device_vector_t *vector, int64_t size, double *values);
     int pdhcg_device_vector_destroy(pdhcg_device_vector_t vector);
     int pdhcg_device_vector_set_values(pdhcg_device_vector_t vector, double *values);
-    /* CSR arrays use zero-based int indices and double values. Output storage is
-   supplied by the caller: n+1 row offsets and nnz indices/values. */
+    /* Zero-based CSR; the caller supplies n+1 output row offsets and nnz
+       column indices and values. */
     int pdhcg_device_csr_transpose(pdhcg_device_sparse_t handle,
                                    int m,
                                    int n,

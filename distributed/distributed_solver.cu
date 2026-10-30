@@ -15,17 +15,17 @@ limitations under the License.
 */
 
 #include "device/cuda/checks.h"
+#include "device_kernels.h"
 #include "distributed_interface.h"
 #include "distributed_solver.h"
 #include "distributed_types.h"
 #include "distributed_utils.h"
+#include "infeasibility.h"
 #include "internal_types.h"
 #include "pdhcg.h"
-#include "device_kernels.h"
 #include "pdhg_core_op.h"
-#include "infeasibility.h"
 #include "permute.h"
-#include "preconditioner.h"
+#include "preprocess.h"
 #include "presolve_wrapper.h"
 #include "qcqp_transform.h"
 #include "solver.h"
@@ -278,27 +278,15 @@ static pdhcg_result_t *distributed_optimize_core(const pdhg_parameters_t *params
         print_distributed_params(params);
     }
 
-    rescale_info_t *rescale_info = NULL;
-
-    if (grid_context->rank_global == 0)
-    {
-        rescale_info = rescale_problem(params, working_problem);
-    }
-
     qp_problem_t *local_working_problem = NULL;
-    rescale_info_t *local_rescale_info = NULL;
+    distribute_data_bcast_then_partition(working_problem, grid_context, params, &local_working_problem);
 
-    distribute_data_bcast_then_partition(
-        working_problem, rescale_info, grid_context, params, &local_working_problem, &local_rescale_info);
-
-    pdhg_solver_state_t *state =
-        initialize_solver_state(params, local_working_problem, local_rescale_info, grid_context);
+    qp_problem_t *device_problem = convert_problem_to_device(local_working_problem, grid_context);
+    pdhg_solver_state_t *state = initialize_solver_state(params, local_working_problem, device_problem, grid_context);
+    free_device_problem(device_problem);
     qp_problem_free(local_working_problem);
 
     allreduce_obj_bound_norm(state, params);
-
-    if (local_rescale_info)
-        rescale_info_free(local_rescale_info);
 
     if (state->quadratic_objective_term->nonconvexity < 0)
     {
@@ -374,12 +362,6 @@ static pdhcg_result_t *distributed_optimize_core(const pdhg_parameters_t *params
     }
 
     pdhcg_result_t *result = create_result_from_state_distributed(state, working_problem);
-
-    if (grid_context->rank_global == 0)
-    {
-        if (rescale_info)
-            rescale_info_free(rescale_info);
-    }
 
     pdhg_solver_state_free(state);
 

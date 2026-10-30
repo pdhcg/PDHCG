@@ -19,12 +19,48 @@ limitations under the License.
 #include "device_cones.h"
 #include <math.h>
 
-cone_proj_method_t pdhcg_device_cone_method(const cone_blocks_t *cones, int bucket, const double *rescaling)
+void pdhcg_device_cone_methods(const cone_blocks_t *cones, const double *rescaling, cone_proj_method_t *methods)
 {
-    (void)cones;
-    (void)bucket;
     (void)rescaling;
-    return PROJ_METHOD_THREAD;
+    for (int cone = 0; cone < cones->num_cones; ++cone)
+        methods[cone] = PROJ_METHOD_THREAD;
+}
+
+void pdhcg_device_initialize_cone_scaling_and_primal(pdhg_solver_state_t *state)
+{
+    if (state->affine_cones.coordinate_rescaling)
+    {
+#pragma omp parallel for schedule(static) if (state->num_constraints >= 1024)
+        for (int row = 0; row < state->num_constraints; ++row)
+            state->affine_cones.coordinate_rescaling[row] = 1.0 / state->constraint_rescaling[row];
+    }
+
+    const double INV_SQRT2 = 0.7071067811865475;
+    const cone_runtime_t *cones = &state->cones;
+    for (int b = 0; b < cones->num_buckets; ++b)
+    {
+        const cone_bucket_t *bucket = &cones->buckets[b];
+        if (bucket->type == CONE_EXPONENTIAL || bucket->type == CONE_POWER || bucket->type == CONE_PSD)
+            continue;
+#pragma omp parallel for schedule(static) if (bucket->count >= 16)
+        for (int k = 0; k < bucket->count; ++k)
+        {
+            int cone = bucket->offset + k;
+            int aux0 = cones->start_idx[cone] + cones->v_dim[cone];
+            if (bucket->type == CONE_STANDARD_SOC)
+            {
+                if (!cones->is_fixed || !cones->is_fixed[aux0])
+                    state->initial_primal_solution[aux0] =
+                        -INV_SQRT2 * state->constraint_bound_rescaling * state->variable_rescaling[aux0];
+                if (!cones->is_fixed || !cones->is_fixed[aux0 + 1])
+                    state->initial_primal_solution[aux0 + 1] =
+                        INV_SQRT2 * state->constraint_bound_rescaling * state->variable_rescaling[aux0 + 1];
+            }
+            else if (!cones->is_fixed || !cones->is_fixed[aux0 + 1])
+                state->initial_primal_solution[aux0 + 1] =
+                    state->constraint_bound_rescaling * state->variable_rescaling[aux0 + 1];
+        }
+    }
 }
 
 void launch_cone_reflection(

@@ -15,7 +15,7 @@ limitations under the License.
 */
 
 #include "pdhcg.h"
-#include "preconditioner.h"
+#include "preprocess.h"
 #include "solver_state.h"
 
 #include <math.h>
@@ -54,8 +54,9 @@ static void check_information(const char *name, qp_problem_t *problem, double ex
     params.bound_objective_rescaling = false;
     params.sv_tol = 1e-8;
 
-    rescale_info_t *rescale_info = rescale_problem(&params, problem);
-    pdhg_solver_state_t *state = initialize_solver_state(&params, problem, rescale_info, NULL);
+    qp_problem_t *device_state = convert_problem_to_device(problem, NULL);
+    pdhg_solver_state_t *state = initialize_solver_state(&params, problem, device_state, NULL);
+    free_device_problem(device_state);
 
     char norm_name[96];
     char minimum_name[96];
@@ -65,7 +66,6 @@ static void check_information(const char *name, qp_problem_t *problem, double ex
     check_close(minimum_name, state->quadratic_objective_term->nonconvexity, expected_minimum);
 
     pdhg_solver_state_free(state);
-    rescale_info_free(rescale_info);
     qp_problem_free(problem);
 }
 

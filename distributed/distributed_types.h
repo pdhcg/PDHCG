@@ -50,6 +50,7 @@ struct grid_context_s
     int coords[2];
     int dims[2];
     int global_num_variables;
+    quad_obj_type_t quad_type;
     int global_num_cones;
     int global_num_affine_cones;
     int n_start;

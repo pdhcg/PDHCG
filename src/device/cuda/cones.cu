@@ -20,58 +20,168 @@ limitations under the License.
 #include "pdhcg_affine_cone_kernels.h"
 #include "utils.h"
 #include <math.h>
-cone_proj_method_t pdhcg_device_cone_method(const cone_blocks_t *cones, int cone, const double *coordinate_rescaling)
+
+typedef struct
 {
-    cone_type_t type = cones->type[cone];
-    int v_dim = cones->v_dim[cone];
-    if (type == CONE_EXPONENTIAL || type == CONE_POWER || type == CONE_PSD)
-        return PROJ_METHOD_THREAD;
-    if (v_dim < 32)
-        return PROJ_METHOD_THREAD;
-    if (type != CONE_STANDARD_SOC && type != CONE_ROTATED_SOC)
-        return PROJ_METHOD_WARP;
+    int cone_index;
+    int start_idx;
+    int v_dim;
+    cone_type_t type;
+    cone_proj_method_t method;
+} cone_method_candidate_t;
 
-    int start = cones->start_idx[cone];
-    if (cones->is_fixed)
-    {
-        for (int slot = 0; slot < v_dim + 2; ++slot)
-            if (cones->is_fixed[start + slot])
-                return v_dim >= PDHCG_LARGE_CONE_MIN_VDIM ? PROJ_METHOD_GRID_WEIGHTED : PROJ_METHOD_BLOCK;
-    }
-    if (v_dim < PDHCG_LARGE_CONE_MIN_VDIM || !coordinate_rescaling)
-        return PROJ_METHOD_WARP;
-
-    int endpoint0 = start + v_dim;
-    int endpoint1 = endpoint0 + 1;
-
-    double d0 = coordinate_rescaling[endpoint0];
-    double d1 = coordinate_rescaling[endpoint1];
+__global__ static void classify_large_cones_kernel(cone_method_candidate_t *candidates, const double *rescaling)
+{
+    cone_method_candidate_t *candidate = candidates + blockIdx.x;
+    int start = candidate->start_idx;
+    int dimension = candidate->v_dim;
+    double d0 = rescaling[start + dimension];
+    double d1 = rescaling[start + dimension + 1];
     if (!(d0 > 0.0) || !(d1 > 0.0) || !isfinite(d0) || !isfinite(d1))
-        return PROJ_METHOD_WARP;
+    {
+        if (threadIdx.x == 0)
+            candidate->method = PROJ_METHOD_WARP;
+        return;
+    }
 
     double d_vector = d1;
-    if (type == CONE_STANDARD_SOC)
+    if (candidate->type == CONE_STANDARD_SOC)
     {
         if (d0 != d1)
-            return PROJ_METHOD_GRID_WEIGHTED;
+        {
+            if (threadIdx.x == 0)
+                candidate->method = PROJ_METHOD_GRID_WEIGHTED;
+            return;
+        }
     }
     else
     {
-        double d_ref = coordinate_rescaling[start];
-        bool scalar_uniform = d0 == d_ref && d1 == d_ref;
-        for (int i = 1; i < v_dim && scalar_uniform; ++i)
-            scalar_uniform = coordinate_rescaling[start + i] == d_ref;
-        if (scalar_uniform)
-            return PROJ_METHOD_GRID;
+        double d_ref = rescaling[start];
+        bool mismatch = d0 != d_ref || d1 != d_ref;
+        for (int i = threadIdx.x; i < dimension; i += blockDim.x)
+            mismatch |= rescaling[start + i] != d_ref;
+        if (!__syncthreads_or(mismatch))
+        {
+            if (threadIdx.x == 0)
+                candidate->method = PROJ_METHOD_GRID;
+            return;
+        }
         d_vector = sqrt(d0) * sqrt(d1);
     }
 
-    for (int i = 0; i < v_dim; ++i)
+    bool mismatch = false;
+    for (int i = threadIdx.x; i < dimension; i += blockDim.x)
+        mismatch |= rescaling[start + i] != d_vector;
+    bool weighted = __syncthreads_or(mismatch);
+    if (threadIdx.x == 0)
+        candidate->method = weighted ? PROJ_METHOD_GRID_WEIGHTED : PROJ_METHOD_GRID;
+}
+
+void pdhcg_device_cone_methods(const cone_blocks_t *cones, const double *rescaling, cone_proj_method_t *methods)
+{
+    cone_method_candidate_t *candidates = NULL;
+    size_t count = 0, capacity = 0;
+    for (int cone = 0; cone < cones->num_cones; ++cone)
     {
-        if (coordinate_rescaling[start + i] != d_vector)
-            return PROJ_METHOD_GRID_WEIGHTED;
+        cone_type_t type = cones->type[cone];
+        int dimension = cones->v_dim[cone];
+        methods[cone] = PROJ_METHOD_THREAD;
+        if (type == CONE_EXPONENTIAL || type == CONE_POWER || type == CONE_PSD || dimension < 32)
+            continue;
+        methods[cone] = PROJ_METHOD_WARP;
+        if (type != CONE_STANDARD_SOC && type != CONE_ROTATED_SOC)
+            continue;
+
+        bool fixed = false;
+        if (cones->is_fixed)
+            for (int slot = cones->start_idx[cone]; slot < cones->start_idx[cone] + dimension + 2 && !fixed; ++slot)
+                fixed = cones->is_fixed[slot] != 0;
+        if (fixed)
+        {
+            methods[cone] = dimension >= PDHCG_LARGE_CONE_MIN_VDIM ? PROJ_METHOD_GRID_WEIGHTED : PROJ_METHOD_BLOCK;
+            continue;
+        }
+        if (dimension >= PDHCG_LARGE_CONE_MIN_VDIM && rescaling)
+        {
+            if (count == capacity)
+            {
+                capacity = capacity ? 2 * capacity : 4;
+                candidates = (cone_method_candidate_t *)safe_realloc(candidates, capacity * sizeof(*candidates));
+            }
+            candidates[count++] = {cone, cones->start_idx[cone], dimension, type, PROJ_METHOD_WARP};
+        }
     }
-    return PROJ_METHOD_GRID;
+    if (!count)
+        return;
+
+    size_t bytes = count * sizeof(*candidates);
+    cone_method_candidate_t *device_candidates = NULL;
+    DEVICE_CHECK(pdhcg_device_allocate((void **)&device_candidates, bytes));
+    DEVICE_CHECK(pdhcg_device_copy(device_candidates, candidates, bytes, PDHCG_COPY_HOST_TO_DEVICE));
+    classify_large_cones_kernel<<<count, THREADS_PER_BLOCK>>>(device_candidates, rescaling);
+    CUDA_CHECK(cudaGetLastError());
+    DEVICE_CHECK(pdhcg_device_copy(candidates, device_candidates, bytes, PDHCG_COPY_DEVICE_TO_HOST));
+    for (size_t index = 0; index < count; ++index)
+        methods[candidates[index].cone_index] = candidates[index].method;
+    DEVICE_CHECK(pdhcg_device_free(device_candidates));
+    free(candidates);
+}
+
+__global__ static void initialize_affine_scaling_kernel(const double *rescaling, double *inverse, int count)
+{
+    int row = blockIdx.x * blockDim.x + threadIdx.x;
+    if (row < count)
+        inverse[row] = 1.0 / rescaling[row];
+}
+
+__global__ static void initialize_variable_cone_primal_kernel(const int *start_idx,
+                                                              const int *v_dim,
+                                                              const char *is_fixed,
+                                                              const double *rescaling,
+                                                              double bound_scale,
+                                                              double *initial,
+                                                              bool standard_soc,
+                                                              int count)
+{
+    int cone = blockIdx.x * blockDim.x + threadIdx.x;
+    if (cone >= count)
+        return;
+    const double INV_SQRT2 = 0.7071067811865475;
+    int aux0 = start_idx[cone] + v_dim[cone];
+    if (standard_soc)
+    {
+        if (!is_fixed || !is_fixed[aux0])
+            initial[aux0] = -INV_SQRT2 * bound_scale * rescaling[aux0];
+        if (!is_fixed || !is_fixed[aux0 + 1])
+            initial[aux0 + 1] = INV_SQRT2 * bound_scale * rescaling[aux0 + 1];
+    }
+    else if (!is_fixed || !is_fixed[aux0 + 1])
+        initial[aux0 + 1] = bound_scale * rescaling[aux0 + 1];
+}
+
+void pdhcg_device_initialize_cone_scaling_and_primal(pdhg_solver_state_t *state)
+{
+    if (state->affine_cones.coordinate_rescaling && state->num_constraints > 0)
+        initialize_affine_scaling_kernel<<<(state->num_constraints + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK,
+                                           THREADS_PER_BLOCK>>>(
+            state->constraint_rescaling, state->affine_cones.coordinate_rescaling, state->num_constraints);
+    const cone_runtime_t *cones = &state->cones;
+    for (int b = 0; b < cones->num_buckets; ++b)
+    {
+        const cone_bucket_t *bucket = &cones->buckets[b];
+        if (bucket->type == CONE_EXPONENTIAL || bucket->type == CONE_POWER || bucket->type == CONE_PSD)
+            continue;
+        if (bucket->count > 0)
+            initialize_variable_cone_primal_kernel<<<(bucket->count + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK,
+                                                     THREADS_PER_BLOCK>>>(cones->start_idx + bucket->offset,
+                                                                          cones->v_dim + bucket->offset,
+                                                                          cones->is_fixed,
+                                                                          state->variable_rescaling,
+                                                                          state->constraint_bound_rescaling,
+                                                                          state->initial_primal_solution,
+                                                                          bucket->type == CONE_STANDARD_SOC,
+                                                                          bucket->count);
+    }
 }
 void pdhcg_device_prepare_affine_residuals(pdhg_solver_state_t *state, double *projection_point)
 {

@@ -15,6 +15,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 #include "utils.h"
+#include "cone_utils.h"
 #include "infeasibility.h"
 #include "device_kernels.h"
 #include "solver_state.h"
@@ -22,10 +23,35 @@ limitations under the License.
 #include <math.h>
 #include <signal.h>
 #include <string.h>
+#include <time.h>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 #ifndef PDHCG_VERSION
 #define PDHCG_VERSION "unknown"
 #endif
+
+double monotonic_time_seconds(void)
+{
+#ifdef _WIN32
+    LARGE_INTEGER counter, frequency;
+    if (!QueryPerformanceFrequency(&frequency) || !QueryPerformanceCounter(&counter))
+    {
+        fprintf(stderr, "Failed to read the performance counter.\n");
+        exit(EXIT_FAILURE);
+    }
+    return (double)counter.QuadPart / (double)frequency.QuadPart;
+#else
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
+    {
+        perror("clock_gettime");
+        exit(EXIT_FAILURE);
+    }
+    return (double)now.tv_sec + (double)now.tv_nsec * 1e-9;
+#endif
+}
 
 void *safe_malloc(size_t size)
 {
@@ -63,6 +89,104 @@ void *safe_realloc(void *ptr, size_t new_size)
         exit(EXIT_FAILURE);
     }
     return tmp;
+}
+
+void free_device_csr(device_sparse_matrix_csr_t *matrix)
+{
+    if (!matrix)
+        return;
+    if (matrix->row_ptr)
+        DEVICE_CHECK(pdhcg_device_free(matrix->row_ptr));
+    if (matrix->col_ind)
+        DEVICE_CHECK(pdhcg_device_free(matrix->col_ind));
+    if (matrix->val)
+        DEVICE_CHECK(pdhcg_device_free(matrix->val));
+    free(matrix);
+}
+
+qp_problem_t *deepcopy_problem(const qp_problem_t *prob)
+{
+    qp_problem_t *new_prob = (qp_problem_t *)safe_calloc(1, sizeof(qp_problem_t));
+
+    new_prob->num_variables = prob->num_variables;
+    new_prob->num_constraints = prob->num_constraints;
+    new_prob->constraint_matrix_num_nonzeros = prob->constraint_matrix_num_nonzeros;
+    new_prob->objective_sparse_matrix_num_nonzeros = prob->objective_sparse_matrix_num_nonzeros;
+    new_prob->objective_lowrank_matrix_num_nonzeros = prob->objective_lowrank_matrix_num_nonzeros;
+    new_prob->objective_constant = prob->objective_constant;
+    new_prob->num_rank_lowrank_obj = prob->num_rank_lowrank_obj;
+
+    size_t var_bytes = prob->num_variables * sizeof(double);
+    size_t con_bytes = prob->num_constraints * sizeof(double);
+
+    new_prob->variable_lower_bound = safe_malloc(var_bytes);
+    new_prob->variable_upper_bound = safe_malloc(var_bytes);
+    new_prob->objective_vector = safe_malloc(var_bytes);
+    new_prob->constraint_lower_bound = safe_malloc(con_bytes);
+    new_prob->constraint_upper_bound = safe_malloc(con_bytes);
+    new_prob->affine_cone_offset = safe_malloc(con_bytes);
+
+    if (var_bytes > 0)
+    {
+        memcpy(new_prob->variable_lower_bound, prob->variable_lower_bound, var_bytes);
+        memcpy(new_prob->variable_upper_bound, prob->variable_upper_bound, var_bytes);
+        memcpy(new_prob->objective_vector, prob->objective_vector, var_bytes);
+    }
+    if (con_bytes > 0)
+    {
+        memcpy(new_prob->constraint_lower_bound, prob->constraint_lower_bound, con_bytes);
+        memcpy(new_prob->constraint_upper_bound, prob->constraint_upper_bound, con_bytes);
+        memcpy(new_prob->affine_cone_offset, prob->affine_cone_offset, con_bytes);
+    }
+    new_prob->constraint_matrix =
+        deepcopy_csr_component(prob->constraint_matrix, prob->num_constraints, prob->constraint_matrix_num_nonzeros);
+    new_prob->objective_sparse_matrix = deepcopy_csr_component(
+        prob->objective_sparse_matrix, prob->num_variables, prob->objective_sparse_matrix_num_nonzeros);
+    new_prob->objective_lowrank_matrix = deepcopy_csr_component(
+        prob->objective_lowrank_matrix, prob->num_rank_lowrank_obj, prob->objective_lowrank_matrix_num_nonzeros);
+
+    new_prob->objective_lowrank_middle_matrix =
+        deepcopy_csr_component(prob->objective_lowrank_middle_matrix,
+                               prob->num_rank_lowrank_obj,
+                               prob->objective_lowrank_middle_matrix_num_nonzeros);
+    new_prob->objective_lowrank_middle_matrix_num_nonzeros = prob->objective_lowrank_middle_matrix_num_nonzeros;
+
+    if (prob->primal_start)
+    {
+        new_prob->primal_start = safe_malloc(var_bytes);
+        memcpy(new_prob->primal_start, prob->primal_start, var_bytes);
+    }
+    if (prob->dual_start)
+    {
+        new_prob->dual_start = safe_malloc(con_bytes);
+        memcpy(new_prob->dual_start, prob->dual_start, con_bytes);
+    }
+
+    new_prob->num_quadratic_constraints = prob->num_quadratic_constraints;
+    if (prob->num_quadratic_constraints > 0)
+    {
+        int K = prob->num_quadratic_constraints;
+        new_prob->quadratic_constraint_row_indices = safe_malloc(K * sizeof(int));
+        new_prob->quadratic_constraint_matrix_num_nonzeros = safe_malloc(K * sizeof(int));
+        new_prob->quadratic_constraint_matrices = safe_malloc(K * sizeof(CsrComponent *));
+        memcpy(new_prob->quadratic_constraint_row_indices, prob->quadratic_constraint_row_indices, K * sizeof(int));
+        memcpy(new_prob->quadratic_constraint_matrix_num_nonzeros,
+               prob->quadratic_constraint_matrix_num_nonzeros,
+               K * sizeof(int));
+        for (int i = 0; i < K; ++i)
+        {
+            new_prob->quadratic_constraint_matrices[i] =
+                deepcopy_csr_component(prob->quadratic_constraint_matrices[i],
+                                       prob->num_variables,
+                                       prob->quadratic_constraint_matrix_num_nonzeros[i]);
+        }
+    }
+
+    new_prob->num_original_variables = prob->num_original_variables;
+    cone_blocks_clone(&new_prob->cones, &prob->cones);
+    cone_blocks_clone(&new_prob->affine_cones, &prob->affine_cones);
+
+    return new_prob;
 }
 
 qp_problem_t *create_problem_with_dummy_constraint(const qp_problem_t *prob)

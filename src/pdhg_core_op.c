@@ -26,7 +26,7 @@ limitations under the License.
 
 #include "pdhcg_psd_cone.h"
 #include "pdhg_core_op.h"
-#include "preconditioner.h"
+#include "preprocess.h"
 #include "solver.h"
 #include "solver_state.h"
 #include "spmv_backend.h"

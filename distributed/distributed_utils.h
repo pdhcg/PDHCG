@@ -39,30 +39,20 @@ extern "C"
     void destroy_parallel_context(grid_context_t *grid);
     void
     configure_partition_metadata(const qp_problem_t *problem, grid_context_t *grid, const pdhg_parameters_t *params);
-    rescale_info_t *partition_rescale_info(rescale_info_t *global_info,
-                                           const grid_context_t *grid,
-                                           partition_method_t method,
-                                           int *out_n_start,
-                                           int *out_m_start);
     qp_problem_t *partition_qp_problem(const qp_problem_t *global_qp,
                                        const grid_context_t *grid,
                                        partition_method_t method,
                                        int *out_n_start,
                                        int *out_m_start);
 
-    rescale_info_t *deserialize_rescale_info(const char *buffer);
-    void serialize_rescale_info(const rescale_info_t *info, char *buffer);
-    size_t get_rescale_info_size(const rescale_info_t *info);
     qp_problem_t *deserialize_qp_problem_from_ptr(const char **ptr_ref);
     void serialize_qp_problem_to_ptr(const qp_problem_t *qp, char **ptr_ref);
     size_t get_qp_problem_size(const qp_problem_t *qp);
     void big_bcast_bytes(void **buffer_ptr, size_t *size_ptr, int root, MPI_Comm comm);
     void distribute_data_bcast_then_partition(const qp_problem_t *working_problem,
-                                              rescale_info_t *rescale_info,
                                               grid_context_t *grid_context,
                                               const pdhg_parameters_t *params,
-                                              qp_problem_t **out_local_qp,
-                                              rescale_info_t **out_local_resc);
+                                              qp_problem_t **out_local_qp);
     void gather_distributed_vector(
         double *d_local_vec, int local_len, MPI_Comm comm_check, MPI_Comm comm_gather, double **result_ptr);
     void print_distributed_params(const pdhg_parameters_t *params);

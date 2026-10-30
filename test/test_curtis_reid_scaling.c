@@ -15,13 +15,24 @@ limitations under the License.
 */
 
 #include "pdhcg.h"
-#include "preconditioner.h"
+#include "preprocess.h"
 #include "solver_state.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 
 static int failures = 0;
+
+static pdhg_solver_state_t *initialize_scaled_problem(const pdhg_parameters_t *parameters, const qp_problem_t *problem)
+{
+    pdhg_parameters_t params = *parameters;
+    params.sv_max_iter = 2;
+    params.verbose = 0;
+    qp_problem_t *device_problem = convert_problem_to_device(problem, NULL);
+    pdhg_solver_state_t *state = initialize_solver_state(&params, problem, device_problem, NULL);
+    free_device_problem(device_problem);
+    return state;
+}
 
 static void check_close(const char *name, double actual, double expected, double tolerance)
 {
@@ -104,8 +115,8 @@ static void test_plain_scaling(void)
     }
 
     pdhg_parameters_t params = curtis_reid_only_parameters();
-    rescale_info_t *info = rescale_problem(&params, problem);
-    if (!info)
+    pdhg_solver_state_t *state = initialize_scaled_problem(&params, problem);
+    if (!state)
     {
         fprintf(stderr, "plain Curtis-Reid scaling returned NULL\n");
         ++failures;
@@ -118,38 +129,37 @@ static void test_plain_scaling(void)
         for (int nz = problem->constraint_matrix->row_ptr[row]; nz < problem->constraint_matrix->row_ptr[row + 1]; ++nz)
         {
             const int col = problem->constraint_matrix->col_ind[nz];
-            const double expected =
-                problem->constraint_matrix->val[nz] / (info->con_rescale[row] * info->var_rescale[col]);
-            check_close("scaled A equivalence", info->scaled_problem->constraint_matrix->val[nz], expected, 1e-12);
-            check_close(
-                "Curtis-Reid unit magnitude", fabs(info->scaled_problem->constraint_matrix->val[nz]), 1.0, 1e-12);
+            const double expected = problem->constraint_matrix->val[nz] /
+                (state->constraint_rescaling[row] * state->variable_rescaling[col]);
+            check_close("scaled A equivalence", state->constraint_matrix->val[nz], expected, 1e-12);
+            check_close("Curtis-Reid unit magnitude", fabs(state->constraint_matrix->val[nz]), 1.0, 1e-12);
         }
         check_close("constraint lower bound",
-                    info->scaled_problem->constraint_lower_bound[row],
-                    problem->constraint_lower_bound[row] / info->con_rescale[row],
+                    state->constraint_lower_bound[row],
+                    problem->constraint_lower_bound[row] / state->constraint_rescaling[row],
                     1e-12);
         check_close("constraint upper bound",
-                    info->scaled_problem->constraint_upper_bound[row],
-                    problem->constraint_upper_bound[row] / info->con_rescale[row],
+                    state->constraint_upper_bound[row],
+                    problem->constraint_upper_bound[row] / state->constraint_rescaling[row],
                     1e-12);
     }
     for (int col = 0; col < problem->num_variables; ++col)
     {
         check_close("objective scaling",
-                    info->scaled_problem->objective_vector[col],
-                    problem->objective_vector[col] / info->var_rescale[col],
+                    state->objective_vector[col],
+                    problem->objective_vector[col] / state->variable_rescaling[col],
                     1e-12);
         check_close("variable lower bound",
-                    info->scaled_problem->variable_lower_bound[col],
-                    problem->variable_lower_bound[col] * info->var_rescale[col],
+                    state->variable_lower_bound[col],
+                    problem->variable_lower_bound[col] * state->variable_rescaling[col],
                     1e-12);
         check_close("variable upper bound",
-                    info->scaled_problem->variable_upper_bound[col],
-                    problem->variable_upper_bound[col] * info->var_rescale[col],
+                    state->variable_upper_bound[col],
+                    problem->variable_upper_bound[col] * state->variable_rescaling[col],
                     1e-12);
     }
 
-    rescale_info_free(info);
+    pdhg_solver_state_free(state);
     qp_problem_free(problem);
 }
 
@@ -164,7 +174,7 @@ static void test_cone_block_scaling(void)
     }
 
     pdhg_parameters_t params = curtis_reid_only_parameters();
-    rescale_info_t *cone_preserving = rescale_problem(&params, problem);
+    pdhg_solver_state_t *cone_preserving = initialize_scaled_problem(&params, problem);
     if (!cone_preserving)
     {
         fprintf(stderr, "cone-preserving Curtis-Reid scaling returned NULL\n");
@@ -172,16 +182,20 @@ static void test_cone_block_scaling(void)
         qp_problem_free(problem);
         return;
     }
-    check_close("cone-preserving row scale", cone_preserving->con_rescale[0], exp(4.5), 1e-12);
-    check_close("cone-preserving non-cone scale", cone_preserving->var_rescale[0], exp(7.5), 1e-12);
-    check_close("cone-preserving block minimizer", cone_preserving->var_rescale[1], exp(-2.5), 1e-12);
-    check_close(
-        "cone-preserving scale slot 2", cone_preserving->var_rescale[2], cone_preserving->var_rescale[1], 1e-14);
-    check_close(
-        "cone-preserving scale slot 3", cone_preserving->var_rescale[3], cone_preserving->var_rescale[1], 1e-14);
+    check_close("cone-preserving row scale", cone_preserving->constraint_rescaling[0], exp(4.5), 1e-12);
+    check_close("cone-preserving non-cone scale", cone_preserving->variable_rescaling[0], exp(7.5), 1e-12);
+    check_close("cone-preserving block minimizer", cone_preserving->variable_rescaling[1], exp(-2.5), 1e-12);
+    check_close("cone-preserving scale slot 2",
+                cone_preserving->variable_rescaling[2],
+                cone_preserving->variable_rescaling[1],
+                1e-14);
+    check_close("cone-preserving scale slot 3",
+                cone_preserving->variable_rescaling[3],
+                cone_preserving->variable_rescaling[1],
+                1e-14);
 
     params.use_cone_preserving_scaling = false;
-    rescale_info_t *coordinatewise = rescale_problem(&params, problem);
+    pdhg_solver_state_t *coordinatewise = initialize_scaled_problem(&params, problem);
     if (!coordinatewise)
     {
         fprintf(stderr, "coordinate-wise cone Curtis-Reid scaling returned NULL\n");
@@ -191,20 +205,18 @@ static void test_cone_block_scaling(void)
     {
         for (int nz = 0; nz < problem->constraint_matrix_num_nonzeros; ++nz)
         {
-            check_close("coordinate-wise cone unit magnitude",
-                        fabs(coordinatewise->scaled_problem->constraint_matrix->val[nz]),
-                        1.0,
-                        1e-12);
+            check_close(
+                "coordinate-wise cone unit magnitude", fabs(coordinatewise->constraint_matrix->val[nz]), 1.0, 1e-12);
         }
-        if (coordinatewise->var_rescale[1] == coordinatewise->var_rescale[3])
+        if (coordinatewise->variable_rescaling[1] == coordinatewise->variable_rescaling[3])
         {
             fprintf(stderr, "coordinate-wise cone scaling unexpectedly tied all slots\n");
             ++failures;
         }
-        rescale_info_free(coordinatewise);
+        pdhg_solver_state_free(coordinatewise);
     }
 
-    rescale_info_free(cone_preserving);
+    pdhg_solver_state_free(cone_preserving);
     qp_problem_free(problem);
 }
 
@@ -288,8 +300,8 @@ static void test_phase_taper_case(int length, int affine, int ruiz)
     }
 
     pdhg_parameters_t params = phase_taper_parameters(ruiz);
-    rescale_info_t *info = rescale_problem(&params, problem);
-    if (!info)
+    pdhg_solver_state_t *state = initialize_scaled_problem(&params, problem);
+    if (!state)
     {
         fprintf(stderr, "%s phase-taper scaling returned NULL\n", ruiz ? "Ruiz" : "Pock-Chambolle");
         ++failures;
@@ -302,11 +314,11 @@ static void test_phase_taper_case(int length, int affine, int ruiz)
     double block_max = (double)length;
     double expected = ruiz ? (length <= 8 ? block_max : rms) : (length <= 8 ? rms : sqrt(block_max * rms));
     int start = affine ? problem->affine_cones.start_idx[0] : problem->cones.start_idx[0];
-    const double *scaling = affine ? info->con_rescale : info->var_rescale;
+    const double *scaling = affine ? state->constraint_rescaling : state->variable_rescaling;
     for (int index = start; index < start + length; ++index)
         check_close("phase-taper cone scale", scaling[index], expected, 1e-12);
 
-    rescale_info_free(info);
+    pdhg_solver_state_free(state);
     qp_problem_free(problem);
 }
 
@@ -393,8 +405,8 @@ static void test_psd_scaling_case(int affine, int method)
         params = phase_taper_parameters(method == 1);
     params.use_cone_preserving_scaling = false;
 
-    rescale_info_t *info = rescale_problem(&params, problem);
-    if (!info)
+    pdhg_solver_state_t *state = initialize_scaled_problem(&params, problem);
+    if (!state)
     {
         fprintf(stderr,
                 "%s PSD scaling returned NULL\n",
@@ -406,7 +418,7 @@ static void test_psd_scaling_case(int affine, int method)
         return;
     }
 
-    const double *scaling = affine ? info->con_rescale : info->var_rescale;
+    const double *scaling = affine ? state->constraint_rescaling : state->variable_rescaling;
     check_close("PSD (1,0) congruence scale", scaling[1] * scaling[1], scaling[0] * scaling[3], 1e-12);
     check_close("PSD (2,0) congruence scale", scaling[2] * scaling[2], scaling[0] * scaling[5], 1e-12);
     check_close("PSD (2,1) congruence scale", scaling[4] * scaling[4], scaling[3] * scaling[5], 1e-12);
@@ -421,7 +433,7 @@ static void test_psd_scaling_case(int affine, int method)
         ++failures;
     }
 
-    rescale_info_free(info);
+    pdhg_solver_state_free(state);
     qp_problem_free(problem);
 }
 

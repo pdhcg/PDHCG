@@ -20,7 +20,7 @@ limitations under the License.
 #include "internal_types.h"
 #include "pdhcg.h"
 #include "pdhcg_types.h"
-#include "preconditioner.h"
+#include "preprocess.h"
 #include "solver.h"
 #include "utils.h"
 

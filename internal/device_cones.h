@@ -21,7 +21,9 @@ limitations under the License.
 extern "C"
 {
 #endif
-    cone_proj_method_t pdhcg_device_cone_method(const cone_blocks_t *cones, int cone, const double *rescaling);
+    /* Cone metadata and output methods are host arrays; rescaling stays on the device. */
+    void pdhcg_device_cone_methods(const cone_blocks_t *cones, const double *rescaling, cone_proj_method_t *methods);
+    void pdhcg_device_initialize_cone_scaling_and_primal(pdhg_solver_state_t *state);
     void pdhcg_device_prepare_affine_residuals(pdhg_solver_state_t *state, double *point);
     void pdhcg_device_finish_affine_residuals(double *residual,
                                               const double *product,

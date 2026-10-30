@@ -687,17 +687,122 @@ static __global__ void finalize_affine_complementarity_kernel(double *__restrict
         complementarity_residual[cone] = fabs(complementarity_residual[cone]) / constraint_bound_rescaling;
 }
 
+static __global__ void collect_initialization_stats_kernel(distributed_cone_split_t split,
+                                                           const double *scaling,
+                                                           const double *diagonal,
+                                                           double *partials)
+{
+    int cone = blockIdx.x;
+    int start = split.local_start[cone];
+    int count = split.local_count[cone];
+    __shared__ double minimum[DIST_CONE_THREADS];
+    __shared__ double maximum[DIST_CONE_THREADS];
+    __shared__ double quadratic[DIST_CONE_THREADS];
+    double min_scale = DBL_MAX, max_scale = 0.0, max_q = 0.0;
+    for (int offset = blockIdx.y * blockDim.x + threadIdx.x; offset < count; offset += blockDim.x * gridDim.y)
+    {
+        min_scale = fmin(min_scale, scaling[start + offset]);
+        max_scale = fmax(max_scale, scaling[start + offset]);
+        if (diagonal)
+            max_q = fmax(max_q, fabs(diagonal[start + offset]));
+    }
+    minimum[threadIdx.x] = min_scale;
+    maximum[threadIdx.x] = max_scale;
+    quadratic[threadIdx.x] = max_q;
+    __syncthreads();
+    for (int stride = blockDim.x / 2; stride > 0; stride >>= 1)
+    {
+        if (threadIdx.x < stride)
+        {
+            minimum[threadIdx.x] = fmin(minimum[threadIdx.x], minimum[threadIdx.x + stride]);
+            maximum[threadIdx.x] = fmax(maximum[threadIdx.x], maximum[threadIdx.x + stride]);
+            quadratic[threadIdx.x] = fmax(quadratic[threadIdx.x], quadratic[threadIdx.x + stride]);
+        }
+        __syncthreads();
+    }
+    if (threadIdx.x == 0)
+    {
+        size_t offset = ((size_t)cone * gridDim.y + blockIdx.y) * 3;
+        /* Negation lets one MAX collective also compute the global minimum. */
+        partials[offset] = -minimum[0];
+        partials[offset + 1] = maximum[0];
+        partials[offset + 2] = quadratic[0];
+    }
+}
+
+static __global__ void
+reduce_initialization_stats_kernel(const double *partials, double *stats, int num_cones, int blocks_per_cone)
+{
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index >= 3 * num_cones)
+        return;
+    int cone = index / 3, component = index % 3;
+    double value = component == 0 ? -DBL_MAX : 0.0;
+    for (int block = 0; block < blocks_per_cone; ++block)
+        value = fmax(value, partials[((size_t)cone * blocks_per_cone + block) * 3 + component]);
+    stats[index] = value;
+}
+
+static __global__ void validate_initialization_stats_kernel(const double *stats, int num_cones, double *result)
+{
+    __shared__ int invalid[DIST_CONE_THREADS];
+    int first_invalid = num_cones + 1;
+    for (int cone = threadIdx.x; cone < num_cones; cone += blockDim.x)
+    {
+        double minimum = -stats[3 * cone], maximum = stats[3 * cone + 1];
+        if (!(minimum > 0.0) || fabs(maximum - minimum) > 1e-12 * (1.0 + maximum))
+            first_invalid = min(first_invalid, cone);
+        else if (stats[3 * cone + 2] != 0.0)
+            first_invalid = min(first_invalid, num_cones);
+    }
+    invalid[threadIdx.x] = first_invalid;
+    __syncthreads();
+    for (int stride = blockDim.x / 2; stride > 0; stride >>= 1)
+    {
+        if (threadIdx.x < stride)
+            invalid[threadIdx.x] = min(invalid[threadIdx.x], invalid[threadIdx.x + stride]);
+        __syncthreads();
+    }
+    if (threadIdx.x == 0)
+        result[0] = invalid[0];
+}
+
+static __global__ void initialize_split_endpoints_kernel(distributed_cone_split_t split,
+                                                         const double *variable_rescaling,
+                                                         double constraint_bound_rescaling,
+                                                         double *primal)
+{
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    int cone = index / 2, endpoint = index % 2;
+    if (cone >= split.num_cones)
+        return;
+    int relative = split.v_dim[cone] + endpoint;
+    int first = split.local_first[cone];
+    if (relative < first || relative >= first + split.local_count[cone])
+        return;
+    unsigned char mask = endpoint == 0 ? PDHCG_DIST_CONE_FIXED_AUX0 : PDHCG_DIST_CONE_FIXED_AUX1;
+    if (split.fixed_mask[cone] & mask)
+        return;
+    int slot = split.local_start[cone] + relative - first;
+    double value = 0.0;
+    if (split.type[cone] == CONE_STANDARD_SOC)
+    {
+        const double INV_SQRT2 = 0.70710678118654752440;
+        value = (endpoint == 0 ? -INV_SQRT2 : INV_SQRT2) * constraint_bound_rescaling * variable_rescaling[slot];
+    }
+    else if (endpoint == 1)
+        value = constraint_bound_rescaling * variable_rescaling[slot];
+    primal[slot] = value;
+}
+
 static void copy_int_array(int **device, const int *host, int count)
 {
     CUDA_CHECK(cudaMalloc(device, (size_t)count * sizeof(int)));
     CUDA_CHECK(cudaMemcpy(*device, host, (size_t)count * sizeof(int), cudaMemcpyHostToDevice));
 }
 
-static distributed_cone_split_t *allocate_split_runtime(pdhg_solver_state_t *state,
-                                                        const distributed_cone_partition_t *partition,
-                                                        const double *coordinate_rescaling,
-                                                        MPI_Comm communicator,
-                                                        const char *axis_name)
+static distributed_cone_split_t *
+allocate_split_runtime(pdhg_solver_state_t *state, const distributed_cone_partition_t *partition, cone_axis_t axis)
 {
     if (!partition || partition->num_cones <= 0)
         return NULL;
@@ -734,44 +839,44 @@ static distributed_cone_split_t *allocate_split_runtime(pdhg_solver_state_t *sta
     CUDA_CHECK(cudaMalloc(&split->complementarity_residual, (size_t)K * sizeof(double)));
     CUDA_CHECK(cudaMemset(split->complementarity_residual, 0, (size_t)K * sizeof(double)));
 
-    double *local_min = (double *)malloc((size_t)K * sizeof(double));
-    double *local_max = (double *)malloc((size_t)K * sizeof(double));
-    double *global_min = (double *)malloc((size_t)K * sizeof(double));
-    double *global_max = (double *)malloc((size_t)K * sizeof(double));
-    for (int cone = 0; cone < K; ++cone)
+    const double *coordinate_rescaling =
+        axis == CONE_AXIS_VARIABLE ? state->variable_rescaling : state->constraint_rescaling;
+    const double *diagonal =
+        axis == CONE_AXIS_VARIABLE && state->quadratic_objective_term->quad_obj_type == PDHCG_DIAG_Q
+        ? state->quadratic_objective_term->diagonal_objective_matrix
+        : NULL;
+    double *partials = NULL;
+    CUDA_CHECK(cudaMalloc(&partials, (size_t)K * split->blocks_per_cone * 3 * sizeof(double)));
+    dim3 grid((unsigned int)K, (unsigned int)split->blocks_per_cone);
+    collect_initialization_stats_kernel<<<grid, DIST_CONE_THREADS>>>(*split, coordinate_rescaling, diagonal, partials);
+    reduce_initialization_stats_kernel<<<((size_t)K * 3 + DIST_CONE_THREADS - 1) / DIST_CONE_THREADS,
+                                         DIST_CONE_THREADS>>>(partials, split->stats, K, split->blocks_per_cone);
+    CUDA_CHECK(cudaGetLastError());
+    pdhcg_comm_scope_t scope = axis == CONE_AXIS_VARIABLE ? PDHCG_SCOPE_ROW : PDHCG_SCOPE_COL;
+    pdhcg_all_reduce_array(state->grid_context, split->stats, K * 3, PDHCG_OP_MAX, scope, 0);
+    validate_initialization_stats_kernel<<<1, DIST_CONE_THREADS>>>(split->stats, K, partials);
+    CUDA_CHECK(cudaGetLastError());
+    double invalid = 0.0;
+    CUDA_CHECK(cudaMemcpy(&invalid, partials, sizeof(double), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaFree(partials));
+    if (invalid < K)
     {
-        local_min[cone] = DBL_MAX;
-        local_max[cone] = 0.0;
-        int start = partition->local_start[cone];
-        for (int slot = 0; slot < partition->local_count[cone]; ++slot)
-        {
-            double d = coordinate_rescaling[start + slot];
-            local_min[cone] = fmin(local_min[cone], d);
-            local_max[cone] = fmax(local_max[cone], d);
-        }
+        fprintf(stderr,
+                "Error: split %s cone %d has heterogeneous coordinate scaling; keep it on one GPU or disable "
+                "the split.\n",
+                axis == CONE_AXIS_VARIABLE ? "variable" : "affine",
+                (int)invalid);
+        MPI_Abort(state->grid_context->comm_global, EXIT_FAILURE);
     }
-    MPI_Allreduce(local_min, global_min, K, MPI_DOUBLE, MPI_MIN, communicator);
-    MPI_Allreduce(local_max, global_max, K, MPI_DOUBLE, MPI_MAX, communicator);
-    for (int cone = 0; cone < K; ++cone)
+    if (invalid == K)
     {
-        if (!(global_min[cone] > 0.0) || fabs(global_max[cone] - global_min[cone]) > 1e-12 * (1.0 + global_max[cone]))
-        {
-            fprintf(stderr,
-                    "Error: split %s cone %d has heterogeneous coordinate scaling; keep it on one GPU or disable "
-                    "the split.\n",
-                    axis_name,
-                    cone);
-            MPI_Abort(state->grid_context->comm_global, EXIT_FAILURE);
-        }
+        fprintf(stderr, "Error: a split cone has a nonzero diagonal quadratic objective coefficient.\n");
+        MPI_Abort(state->grid_context->comm_global, EXIT_FAILURE);
     }
-    free(local_min);
-    free(local_max);
-    free(global_min);
-    free(global_max);
     return split;
 }
 
-void initialize_split_cones(pdhg_solver_state_t *state, const rescale_info_t *rescale_info)
+void initialize_split_cones(pdhg_solver_state_t *state)
 {
     state->cones.split = NULL;
     state->affine_cones.split = NULL;
@@ -779,70 +884,15 @@ void initialize_split_cones(pdhg_solver_state_t *state, const rescale_info_t *re
         return;
 
     const distributed_cone_partition_t *partition = &state->grid_context->split_cones;
-    int K = partition->num_cones;
-    distributed_cone_split_t *split =
-        allocate_split_runtime(state, partition, rescale_info->var_rescale, state->grid_context->comm_row, "variable");
+    distributed_cone_split_t *split = allocate_split_runtime(state, partition, CONE_AXIS_VARIABLE);
     state->cones.split = split;
-
-    if (split && rescale_info->processed_problem && rescale_info->processed_problem->quad_type == PDHCG_DIAG_Q)
-    {
-        double local_max_q = 0.0;
-        const double *diag = rescale_info->processed_problem->diagonal_quad_objective;
-        for (int cone = 0; cone < K; ++cone)
-        {
-            int start = partition->local_start[cone];
-            for (int slot = 0; slot < partition->local_count[cone]; ++slot)
-                local_max_q = fmax(local_max_q, fabs(diag[start + slot]));
-        }
-        double global_max_q = 0.0;
-        MPI_Allreduce(&local_max_q, &global_max_q, 1, MPI_DOUBLE, MPI_MAX, state->grid_context->comm_row);
-        if (global_max_q != 0.0)
-        {
-            fprintf(stderr, "Error: a split cone has a nonzero diagonal quadratic objective coefficient.\n");
-            MPI_Abort(state->grid_context->comm_global, EXIT_FAILURE);
-        }
-    }
-
-    const double INV_SQRT2 = 0.70710678118654752440;
-    for (int cone = 0; split && cone < K; ++cone)
-    {
-        int first = partition->local_first[cone];
-        int count = partition->local_count[cone];
-        int local_start = partition->local_start[cone];
-        int k = partition->v_dim[cone];
-        unsigned char fixed = partition->fixed_mask[cone];
-        for (int endpoint = 0; endpoint < 2; ++endpoint)
-        {
-            int relative = k + endpoint;
-            if (relative < first || relative >= first + count)
-                continue;
-            bool pinned =
-                endpoint == 0 ? (fixed & PDHCG_DIST_CONE_FIXED_AUX0) != 0 : (fixed & PDHCG_DIST_CONE_FIXED_AUX1) != 0;
-            if (pinned)
-                continue;
-            int index = local_start + relative - first;
-            double value = 0.0;
-            if (partition->type[cone] == CONE_STANDARD_SOC)
-            {
-                value = (endpoint == 0 ? -INV_SQRT2 : INV_SQRT2) * rescale_info->con_bound_rescale *
-                    rescale_info->var_rescale[index];
-            }
-            else if (endpoint == 1)
-            {
-                value = rescale_info->con_bound_rescale * rescale_info->var_rescale[index];
-            }
-            double *destinations[] = {state->initial_primal_solution,
-                                      state->current_primal_solution,
-                                      state->pdhg_primal_solution,
-                                      state->reflected_primal_solution};
-            for (double *destination : destinations)
-                CUDA_CHECK(cudaMemcpy(destination + index, &value, sizeof(double), cudaMemcpyHostToDevice));
-        }
-    }
+    if (split)
+        initialize_split_endpoints_kernel<<<((size_t)split->num_cones * 2 + DIST_CONE_THREADS - 1) / DIST_CONE_THREADS,
+                                            DIST_CONE_THREADS>>>(
+            *split, state->variable_rescaling, state->constraint_bound_rescaling, state->initial_primal_solution);
 
     const distributed_cone_partition_t *affine_partition = &state->grid_context->split_affine_cones;
-    state->affine_cones.split = allocate_split_runtime(
-        state, affine_partition, rescale_info->con_rescale, state->grid_context->comm_col, "affine");
+    state->affine_cones.split = allocate_split_runtime(state, affine_partition, CONE_AXIS_CONSTRAINT);
 }
 
 void initialize_split_cone_infeasibility_type(const pdhg_solver_state_t *state, unsigned char *host_type)

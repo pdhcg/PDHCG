@@ -20,7 +20,7 @@ limitations under the License.
 #include "distributed_utils.h"
 #include "internal_types.h"
 #include "partition_utils.h"
-#include "solver_state.h"
+#include "pdhcg.h"
 #include "utils.h"
 #include <cuda_runtime.h>
 #include <mpi.h>
@@ -419,6 +419,9 @@ void configure_partition_metadata(const qp_problem_t *problem, grid_context_t *g
     int m = problem->num_constraints;
     int P_cols = grid->dims[1];
     int P_rows = grid->dims[0];
+    grid->global_num_variables = n;
+    grid->quad_type = detect_q_type(
+        problem->objective_sparse_matrix, problem->objective_lowrank_matrix, n, problem->num_rank_lowrank_obj);
     grid->global_num_cones = problem->cones.num_cones;
     grid->global_num_affine_cones = problem->affine_cones.num_cones;
 
@@ -743,88 +746,6 @@ qp_problem_t *partition_qp_problem(const qp_problem_t *global_qp,
     return loc;
 }
 
-rescale_info_t *partition_rescale_info(rescale_info_t *global_info,
-                                       const grid_context_t *grid,
-                                       partition_method_t method,
-                                       int *out_n_start,
-                                       int *out_m_start)
-{
-    rescale_info_t *loc_info = (rescale_info_t *)calloc(1, sizeof(rescale_info_t));
-
-    int n_start, m_start;
-
-    loc_info->scaled_problem = partition_qp_problem(global_info->scaled_problem, grid, method, &n_start, &m_start);
-    qp_problem_t *loc_lp = loc_info->scaled_problem;
-
-    loc_info->var_rescale = copy_slice(global_info->var_rescale, n_start, loc_lp->num_variables);
-    loc_info->con_rescale = copy_slice(global_info->con_rescale, m_start, loc_lp->num_constraints);
-
-    if (out_n_start)
-        *out_n_start = n_start;
-    if (out_m_start)
-        *out_m_start = m_start;
-
-    loc_info->con_bound_rescale = global_info->con_bound_rescale;
-    loc_info->obj_vec_rescale = global_info->obj_vec_rescale;
-    loc_info->rescaling_time_sec = global_info->rescaling_time_sec;
-
-    processed_qp_problem_t *global_processed = global_info->processed_problem;
-    processed_qp_problem_t *loc_processed = (processed_qp_problem_t *)safe_calloc(1, sizeof(processed_qp_problem_t));
-
-    loc_processed->num_variables = loc_lp->num_variables;
-    loc_processed->num_constraints = loc_lp->num_constraints;
-    loc_processed->num_rank_lowrank_obj = loc_lp->num_rank_lowrank_obj;
-    loc_processed->objective_constant = loc_lp->objective_constant;
-
-    loc_processed->constraint_matrix_num_nonzeros = loc_lp->constraint_matrix_num_nonzeros;
-    loc_processed->objective_sparse_matrix_num_nonzeros = loc_lp->objective_sparse_matrix_num_nonzeros;
-    loc_processed->objective_lowrank_matrix_num_nonzeros = loc_lp->objective_lowrank_matrix_num_nonzeros;
-
-    loc_processed->variable_lower_bound = loc_lp->variable_lower_bound;
-    loc_processed->variable_upper_bound = loc_lp->variable_upper_bound;
-    loc_processed->objective_vector = loc_lp->objective_vector;
-    loc_processed->constraint_lower_bound = loc_lp->constraint_lower_bound;
-    loc_processed->constraint_upper_bound = loc_lp->constraint_upper_bound;
-    loc_processed->primal_start = loc_lp->primal_start;
-    loc_processed->dual_start = loc_lp->dual_start;
-    loc_processed->constraint_matrix = loc_lp->constraint_matrix;
-    loc_processed->objective_sparse_matrix = loc_lp->objective_sparse_matrix;
-    loc_processed->objective_lowrank_matrix = loc_lp->objective_lowrank_matrix;
-    loc_processed->quad_type = global_processed->quad_type;
-
-    loc_processed->objective_lowrank_middle_kind = global_processed->objective_lowrank_middle_kind;
-    loc_processed->objective_lowrank_middle_diag = NULL;
-    loc_processed->objective_lowrank_middle_dense = NULL;
-    if (global_processed->objective_lowrank_middle_kind == PDHCG_D_DIAG &&
-        global_processed->objective_lowrank_middle_diag && loc_lp->num_rank_lowrank_obj > 0)
-    {
-        size_t bytes = (size_t)loc_lp->num_rank_lowrank_obj * sizeof(double);
-        loc_processed->objective_lowrank_middle_diag = (double *)malloc(bytes);
-        memcpy(loc_processed->objective_lowrank_middle_diag, global_processed->objective_lowrank_middle_diag, bytes);
-    }
-    else if (global_processed->objective_lowrank_middle_kind == PDHCG_D_DENSE &&
-             global_processed->objective_lowrank_middle_dense && loc_lp->num_rank_lowrank_obj > 0)
-    {
-        size_t bytes = (size_t)loc_lp->num_rank_lowrank_obj * (size_t)loc_lp->num_rank_lowrank_obj * sizeof(double);
-        loc_processed->objective_lowrank_middle_dense = (double *)malloc(bytes);
-        memcpy(loc_processed->objective_lowrank_middle_dense, global_processed->objective_lowrank_middle_dense, bytes);
-    }
-
-    if (global_processed->quad_type == PDHCG_DIAG_Q && global_processed->diagonal_quad_objective != NULL)
-    {
-        loc_processed->diagonal_quad_objective =
-            copy_slice(global_processed->diagonal_quad_objective, n_start, loc_lp->num_variables);
-    }
-    else
-    {
-        loc_processed->diagonal_quad_objective = NULL;
-    }
-
-    loc_info->processed_problem = loc_processed;
-
-    return loc_info;
-}
-
 typedef struct
 {
     char *cursor;
@@ -1057,46 +978,6 @@ qp_problem_t *deserialize_qp_problem_from_ptr(const char **ptr_ref)
     return qp;
 }
 
-static void write_rescale_info_fields(buffer_writer_t *writer, const rescale_info_t *info)
-{
-    buffer_writer_write(writer, &info->con_bound_rescale, sizeof(double));
-    buffer_writer_write(writer, &info->obj_vec_rescale, sizeof(double));
-    buffer_writer_write(writer, &info->rescaling_time_sec, sizeof(double));
-    write_qp_problem_fields(writer, info->scaled_problem);
-    buffer_writer_write(writer, info->var_rescale, (size_t)info->scaled_problem->num_variables * sizeof(double));
-    buffer_writer_write(writer, info->con_rescale, (size_t)info->scaled_problem->num_constraints * sizeof(double));
-}
-
-size_t get_rescale_info_size(const rescale_info_t *info)
-{
-    if (!info)
-        return 0;
-    buffer_writer_t writer = {NULL, 0};
-    write_rescale_info_fields(&writer, info);
-    return writer.size;
-}
-
-void serialize_rescale_info(const rescale_info_t *info, char *buffer)
-{
-    buffer_writer_t writer = {buffer, 0};
-    write_rescale_info_fields(&writer, info);
-}
-
-rescale_info_t *deserialize_rescale_info(const char *buffer)
-{
-    buffer_reader_t reader = {buffer};
-    rescale_info_t *info = (rescale_info_t *)safe_calloc(1, sizeof(rescale_info_t));
-    buffer_reader_read(&reader, &info->con_bound_rescale, sizeof(double));
-    buffer_reader_read(&reader, &info->obj_vec_rescale, sizeof(double));
-    buffer_reader_read(&reader, &info->rescaling_time_sec, sizeof(double));
-    info->scaled_problem = read_qp_problem_fields(&reader);
-    info->var_rescale =
-        (double *)buffer_reader_alloc(&reader, (size_t)info->scaled_problem->num_variables, sizeof(double));
-    info->con_rescale =
-        (double *)buffer_reader_alloc(&reader, (size_t)info->scaled_problem->num_constraints, sizeof(double));
-    return info;
-}
-
 #define CHUNK_SIZE (1024 * 1024 * 1024)
 
 void big_bcast_bytes(void **buffer_ptr, size_t *size_ptr, int root, MPI_Comm comm)
@@ -1129,16 +1010,12 @@ void big_bcast_bytes(void **buffer_ptr, size_t *size_ptr, int root, MPI_Comm com
 }
 
 void distribute_data_bcast_then_partition(const qp_problem_t *working_problem,
-                                          rescale_info_t *rescale_info,
                                           grid_context_t *grid_context,
                                           const pdhg_parameters_t *params,
-                                          qp_problem_t **out_local_qp,
-                                          rescale_info_t **out_local_resc)
+                                          qp_problem_t **out_local_qp)
 {
     double t_start = MPI_Wtime();
     const qp_problem_t *current_working_problem = working_problem;
-    rescale_info_t *current_rescale_info = rescale_info;
-    int real_n_start = 0;
 
     {
         char *buf = NULL;
@@ -1161,40 +1038,11 @@ void distribute_data_bcast_then_partition(const qp_problem_t *working_problem,
             free(buf);
     }
 
-    grid_context->global_num_variables = current_working_problem->num_variables;
     configure_partition_metadata(current_working_problem, grid_context, params);
-
-    {
-        char *buf = NULL;
-        size_t sz = 0;
-        if (grid_context->rank_global == 0)
-        {
-            sz = get_rescale_info_size(current_rescale_info);
-            buf = (char *)malloc(sz);
-            serialize_rescale_info(current_rescale_info, buf);
-        }
-        big_bcast_bytes((void **)&buf, &sz, 0, grid_context->comm_global);
-
-        if (grid_context->rank_global != 0)
-        {
-            current_rescale_info = deserialize_rescale_info(buf);
-            current_rescale_info->processed_problem = preprocess_qp_problem(current_rescale_info->scaled_problem);
-        }
-        if (buf)
-            free(buf);
-    }
-
-    *out_local_resc =
-        partition_rescale_info(current_rescale_info, grid_context, params->partition_method, &real_n_start, NULL);
     *out_local_qp = partition_qp_problem(current_working_problem, grid_context, params->partition_method, NULL, NULL);
-    grid_context->n_start = real_n_start;
-    grid_context->n_end = real_n_start + (*out_local_qp)->num_variables;
 
     if (grid_context->rank_global != 0)
-    {
-        rescale_info_free(current_rescale_info);
         qp_problem_free((qp_problem_t *)current_working_problem);
-    }
 
     double t_end = MPI_Wtime();
     if (params->verbose && grid_context->rank_global == 0)

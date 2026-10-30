@@ -1,7 +1,7 @@
 /* Copyright 2026 Hongpei Li. Licensed under the Apache License, Version 2.0. */
 #include "infeasibility.h"
 #include "device_general_op.h"
-#include "preconditioner.h"
+#include "preprocess.h"
 #include "solver_state.h"
 #include "utils.h"
 #include <math.h>
@@ -100,20 +100,21 @@ static pdhg_solver_state_t *make_state(const problem_t *data, const scaling_t *s
     qp_problem_t *scaled = make_problem(data, scaling);
     double rows[] = {scaling->rows[0], scaling->rows[1]};
     double columns[] = {scaling->columns[0], scaling->columns[1]};
-    rescale_info_t info = {0};
-    info.scaled_problem = scaled;
-    info.processed_problem = preprocess_qp_problem(scaled);
-    CHECK(info.processed_problem != NULL);
-    info.con_rescale = rows;
-    info.var_rescale = columns;
-    info.con_bound_rescale = scaling->bounds;
-    info.obj_vec_rescale = scaling->objective;
     pdhg_parameters_t params;
     set_default_parameters(&params);
     params.verbose = 0;
-    pdhg_solver_state_t *state = initialize_solver_state(&params, original, &info, NULL);
+    params.l_inf_ruiz_iterations = 0;
+    params.curtis_reid_iterations = 0;
+    params.has_pock_chambolle_alpha = false;
+    params.bound_objective_rescaling = false;
+    qp_problem_t *device_problem = convert_problem_to_device(scaled, NULL);
+    pdhg_solver_state_t *state = initialize_solver_state(&params, original, device_problem, NULL);
+    free_device_problem(device_problem);
     CHECK(state != NULL);
-    free_processed_qp_problem(info.processed_problem);
+    upload(state->constraint_rescaling, rows);
+    upload(state->variable_rescaling, columns);
+    state->constraint_bound_rescaling = scaling->bounds;
+    state->objective_vector_rescaling = scaling->objective;
     qp_problem_free(scaled);
     qp_problem_free(original);
     return state;

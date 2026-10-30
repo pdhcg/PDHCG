@@ -1,5 +1,4 @@
 /*
-Copyright 2025 Haihao Lu
 Copyright 2026 Hongpei Li
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,17 +15,17 @@ limitations under the License.
 */
 
 #pragma once
-
 #include "internal_types.h"
 
 #ifdef __cplusplus
 extern "C"
 {
 #endif
-    processed_qp_problem_t *preprocess_qp_problem(const qp_problem_t *raw_problem);
-    void free_processed_qp_problem(processed_qp_problem_t *processed);
-    rescale_info_t *rescale_problem(const pdhg_parameters_t *params, const qp_problem_t *original_problem);
-
+    /* Scale state storage in place; device_problem supplies original structure and cone metadata. */
+    void pdhcg_device_rescale_problem(const pdhg_parameters_t *params,
+                                      const qp_problem_t *device_problem,
+                                      pdhg_solver_state_t *state);
+    void pdhcg_device_initialize_finite_bounds(pdhg_solver_state_t *state);
 #ifdef __cplusplus
 }
 #endif

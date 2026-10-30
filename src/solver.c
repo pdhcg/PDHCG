@@ -16,40 +16,18 @@ limitations under the License.
 */
 
 #include "solver.h"
+#include "infeasibility.h"
 #include "internal_types.h"
 #include "pdhcg.h"
 #include "pdhg_core_op.h"
-#include "infeasibility.h"
-#include "preconditioner.h"
+#include "preprocess.h"
 #include "presolve_wrapper.h"
 #include "qcqp_transform.h"
 #include "solver_state.h"
 #include "utils.h"
-#include <time.h>
-#ifdef _WIN32
-#include <windows.h>
-#endif
 #include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
-
-static double monotonic_time_seconds(void)
-{
-#ifdef _WIN32
-    LARGE_INTEGER counter, frequency;
-    QueryPerformanceFrequency(&frequency);
-    QueryPerformanceCounter(&counter);
-    return (double)counter.QuadPart / (double)frequency.QuadPart;
-#else
-    struct timespec now;
-    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
-    {
-        perror("clock_gettime");
-        exit(EXIT_FAILURE);
-    }
-    return (double)now.tv_sec + (double)now.tv_nsec * 1e-9;
-#endif
-}
 
 pdhcg_result_t *optimize(const pdhg_parameters_t *input_params, const qp_problem_t *original_problem)
 {
@@ -123,16 +101,15 @@ pdhcg_result_t *optimize(const pdhg_parameters_t *input_params, const qp_problem
         working_problem_needs_free = true;
     }
 
-    rescale_info_t *rescale_info = rescale_problem(params, working_problem);
-    grid_context_t *grid_context = NULL;
-    pdhg_solver_state_t *state = initialize_solver_state(params, working_problem, rescale_info, grid_context);
+    qp_problem_t *device_problem = convert_problem_to_device(working_problem, NULL);
+    pdhg_solver_state_t *state = initialize_solver_state(params, working_problem, device_problem, NULL);
+    free_device_problem(device_problem);
 
     if (state->quadratic_objective_term->nonconvexity < 0)
     {
         state->inner_solver->iteration_limit = 1;
     }
 
-    rescale_info_free(rescale_info);
     initialize_step_size_and_primal_weight(state, params);
     const double start_time = monotonic_time_seconds();
     bool do_restart = false;

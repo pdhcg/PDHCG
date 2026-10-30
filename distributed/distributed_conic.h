@@ -23,7 +23,7 @@ extern "C"
 {
 #endif
 
-    void initialize_split_cones(pdhg_solver_state_t *state, const rescale_info_t *rescale_info);
+    void initialize_split_cones(pdhg_solver_state_t *state);
     /* Fill the local entries of a host mask using whole-cone fixed metadata. */
     void initialize_split_cone_infeasibility_type(const pdhg_solver_state_t *state, unsigned char *host_type);
     void free_split_cones(pdhg_solver_state_t *state);

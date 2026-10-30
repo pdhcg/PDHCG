@@ -258,26 +258,28 @@ int pdhcg_device_csr_transpose(pdhcg_device_sparse_t handle,
                                const double *values,
                                const int *rows,
                                const int *columns,
-                               double *ov,
-                               int *orr,
-                               int *oc)
+                               double *out_values,
+                               int *out_rows,
+                               int *out_columns)
 {
     (void)handle;
-    memset(orr, 0, ((size_t)n + 1) * sizeof(*orr));
+    memset(out_rows, 0, ((size_t)n + 1) * sizeof(*out_rows));
+    if (nnz == 0)
+        return 0;
     for (int k = 0; k < nnz; ++k)
-        ++orr[columns[k] + 1];
+        ++out_rows[columns[k] + 1];
     for (int j = 0; j < n; ++j)
-        orr[j + 1] += orr[j];
+        out_rows[j + 1] += out_rows[j];
     int *next = malloc((n > 0 ? (size_t)n : 1) * sizeof(*next));
     if (!next)
         return 1;
-    memcpy(next, orr, (size_t)n * sizeof(*next));
+    memcpy(next, out_rows, (size_t)n * sizeof(*next));
     for (int i = 0; i < m; ++i)
         for (int k = rows[i]; k < rows[i + 1]; ++k)
         {
             int p = next[columns[k]]++;
-            oc[p] = i;
-            ov[p] = values[k];
+            out_columns[p] = i;
+            out_values[p] = values[k];
         }
     free(next);
     return 0;

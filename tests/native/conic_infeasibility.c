@@ -1,7 +1,7 @@
 /* Copyright 2026 Hongpei Li. Licensed under the Apache License, Version 2.0. */
 #include "device_general_op.h"
 #include "infeasibility.h"
-#include "preconditioner.h"
+#include "preprocess.h"
 #include "solver_state.h"
 #include <math.h>
 #include <stdio.h>
@@ -105,19 +105,26 @@ evaluate(const problem_t *data, int scaling, const double *primal, const double 
     }
     else if (scaling == 2)
         params.use_cone_preserving_scaling = false;
-    rescale_info_t *info = rescale_problem(&params, problem);
-    CHECK(info != NULL);
-    pdhg_solver_state_t *state = initialize_solver_state(&params, problem, info, NULL);
+    qp_problem_t *device_state = convert_problem_to_device(problem, NULL);
+    pdhg_solver_state_t *state = initialize_solver_state(&params, problem, device_state, NULL);
+    free_device_problem(device_state);
     CHECK(state != NULL);
     double dx[3], dy[4], anchor[3], sentinel[3], after[3];
+    double var_scale[3], con_scale[4];
+    CHECK(pdhcg_device_copy(
+              var_scale, state->variable_rescaling, (size_t)data->n * sizeof(double), PDHCG_COPY_DEVICE_TO_HOST) == 0);
+    CHECK(pdhcg_device_copy(con_scale,
+                            state->constraint_rescaling,
+                            (size_t)problem->num_constraints * sizeof(double),
+                            PDHCG_COPY_DEVICE_TO_HOST) == 0);
     for (int i = 0; i < data->n; ++i)
     {
-        dx[i] = primal[i] * info->var_rescale[i] * info->con_bound_rescale;
-        anchor[i] = data->anchor[i] * info->var_rescale[i] * info->con_bound_rescale;
+        dx[i] = primal[i] * var_scale[i] * state->constraint_bound_rescaling;
+        anchor[i] = data->anchor[i] * var_scale[i] * state->constraint_bound_rescaling;
         sentinel[i] = 17.25 + i;
     }
     for (int i = 0; i < problem->num_constraints; ++i)
-        dy[i] = dual[i] * info->con_rescale[i] * info->obj_vec_rescale;
+        dy[i] = dual[i] * con_scale[i] * state->objective_vector_rescaling;
     upload(state->delta_primal_solution, dx, data->n);
     upload(state->delta_dual_solution, dy, problem->num_constraints);
     upload(state->pdhg_primal_solution, anchor, data->n);
@@ -167,7 +174,6 @@ evaluate(const problem_t *data, int scaling, const double *primal, const double 
             CHECK(after[i] == sentinel[i]);
     }
     pdhg_solver_state_free(state);
-    rescale_info_free(info);
     qp_problem_free(problem);
     return objective;
 }

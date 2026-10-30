@@ -20,15 +20,19 @@ limitations under the License.
 #include "cone_utils.h"
 #include "device_cones.h"
 #include "device_kernels.h"
+#include "device_scaling.h"
 #include "distributed_conic.h"
 #include "internal_types.h"
 #include "pdhcg.h"
 #include "pdhcg_psd_cone.h"
 #include "pdhg_core_op.h"
-#include "preconditioner.h"
+#include "preprocess.h"
 #include "solver.h"
 #include "spmv_backend.h"
 #include "utils.h"
+#ifdef PDHCG_COMPILE_DISTRIBUTED
+#include "distributed_types.h"
+#endif
 #include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -52,35 +56,23 @@ static void initialize_sparse_component_obj(pdhg_solver_state_t *state, const pr
         (device_sparse_matrix_csr_t *)safe_malloc(sizeof(device_sparse_matrix_csr_t));
 
     int q_rows = get_global_n(state);
-    int q_cols = problem->num_variables;
 
     memset(state->quadratic_objective_term->objective_sparse_matrix, 0, sizeof(device_sparse_matrix_csr_t));
     state->quadratic_objective_term->objective_sparse_matrix->num_rows = q_rows;
-    state->quadratic_objective_term->objective_sparse_matrix->num_cols = q_cols;
+    state->quadratic_objective_term->objective_sparse_matrix->num_cols = problem->num_variables;
     state->quadratic_objective_term->objective_sparse_matrix->num_nonzeros =
         problem->objective_sparse_matrix_num_nonzeros;
 
-    ALLOC_AND_COPY_CSR(state->quadratic_objective_term->objective_sparse_matrix,
-                       problem->objective_sparse_matrix,
-                       q_rows,
-                       problem->objective_sparse_matrix_num_nonzeros);
-
-    state->quadratic_objective_term->spmv_ctx_Q =
-        pdhcg_spmv_ctx_create(state->sparse_handle,
+    ALLOC_AND_COPY_DEVICE_CSR(state->quadratic_objective_term->objective_sparse_matrix,
+                              problem->objective_sparse_matrix,
                               q_rows,
-                              q_cols,
-                              state->quadratic_objective_term->objective_sparse_matrix->num_nonzeros,
-                              state->quadratic_objective_term->objective_sparse_matrix->row_ptr,
-                              state->quadratic_objective_term->objective_sparse_matrix->col_ind,
-                              state->quadratic_objective_term->objective_sparse_matrix->val,
-                              state->vec_primal_sol,
-                              state->quadratic_objective_term->vec_global_primal_obj_prod);
+                              problem->objective_sparse_matrix_num_nonzeros);
 }
 
-static void initialize_lowrank_component_obj(pdhg_solver_state_t *state, const processed_qp_problem_t *problem)
+static void initialize_lowrank_component_obj(pdhg_solver_state_t *state, processed_qp_problem_t *problem)
 {
     state->quadratic_objective_term->num_rank_lowrank_obj = problem->num_rank_lowrank_obj;
-    ALLOC_ZERO(state->quadratic_objective_term->Rx_product, problem->num_rank_lowrank_obj * sizeof(double));
+    ALLOC_ZERO(state->quadratic_objective_term->Rx_product, (size_t)problem->num_rank_lowrank_obj * sizeof(double));
 
     DEVICE_CHECK(pdhcg_device_vector_create(&state->quadratic_objective_term->vec_Rx_prod,
                                             state->quadratic_objective_term->num_rank_lowrank_obj,
@@ -95,10 +87,10 @@ static void initialize_lowrank_component_obj(pdhg_solver_state_t *state, const p
     state->quadratic_objective_term->objective_lowrank_matrix->num_nonzeros =
         problem->objective_lowrank_matrix_num_nonzeros;
 
-    ALLOC_AND_COPY_CSR(state->quadratic_objective_term->objective_lowrank_matrix,
-                       problem->objective_lowrank_matrix,
-                       problem->num_rank_lowrank_obj,
-                       problem->objective_lowrank_matrix_num_nonzeros);
+    ALLOC_AND_COPY_DEVICE_CSR(state->quadratic_objective_term->objective_lowrank_matrix,
+                              problem->objective_lowrank_matrix,
+                              problem->num_rank_lowrank_obj,
+                              problem->objective_lowrank_matrix_num_nonzeros);
 
     state->quadratic_objective_term->objective_lowrank_matrix_t =
         (device_sparse_matrix_csr_t *)safe_malloc(sizeof(device_sparse_matrix_csr_t));
@@ -110,11 +102,11 @@ static void initialize_lowrank_component_obj(pdhg_solver_state_t *state, const p
         problem->objective_lowrank_matrix_num_nonzeros;
 
     DEVICE_CHECK(pdhcg_device_allocate((void **)&state->quadratic_objective_term->objective_lowrank_matrix_t->row_ptr,
-                                       (problem->num_variables + 1) * sizeof(int)));
+                                       ((size_t)problem->num_variables + 1) * sizeof(int)));
     DEVICE_CHECK(pdhcg_device_allocate((void **)&state->quadratic_objective_term->objective_lowrank_matrix_t->col_ind,
-                                       problem->objective_lowrank_matrix_num_nonzeros * sizeof(int)));
+                                       (size_t)problem->objective_lowrank_matrix_num_nonzeros * sizeof(int)));
     DEVICE_CHECK(pdhcg_device_allocate((void **)&state->quadratic_objective_term->objective_lowrank_matrix_t->val,
-                                       problem->objective_lowrank_matrix_num_nonzeros * sizeof(double)));
+                                       (size_t)problem->objective_lowrank_matrix_num_nonzeros * sizeof(double)));
 
     DEVICE_CHECK(pdhcg_device_csr_transpose(state->sparse_handle,
                                             state->quadratic_objective_term->objective_lowrank_matrix->num_rows,
@@ -127,28 +119,6 @@ static void initialize_lowrank_component_obj(pdhg_solver_state_t *state, const p
                                             state->quadratic_objective_term->objective_lowrank_matrix_t->row_ptr,
                                             state->quadratic_objective_term->objective_lowrank_matrix_t->col_ind));
 
-    state->quadratic_objective_term->spmv_ctx_R =
-        pdhcg_spmv_ctx_create(state->sparse_handle,
-                              state->quadratic_objective_term->num_rank_lowrank_obj,
-                              state->num_variables,
-                              state->quadratic_objective_term->objective_lowrank_matrix->num_nonzeros,
-                              state->quadratic_objective_term->objective_lowrank_matrix->row_ptr,
-                              state->quadratic_objective_term->objective_lowrank_matrix->col_ind,
-                              state->quadratic_objective_term->objective_lowrank_matrix->val,
-                              state->vec_primal_sol,
-                              state->quadratic_objective_term->vec_Rx_prod);
-
-    state->quadratic_objective_term->spmv_ctx_Rt =
-        pdhcg_spmv_ctx_create(state->sparse_handle,
-                              state->num_variables,
-                              state->quadratic_objective_term->num_rank_lowrank_obj,
-                              state->quadratic_objective_term->objective_lowrank_matrix_t->num_nonzeros,
-                              state->quadratic_objective_term->objective_lowrank_matrix_t->row_ptr,
-                              state->quadratic_objective_term->objective_lowrank_matrix_t->col_ind,
-                              state->quadratic_objective_term->objective_lowrank_matrix_t->val,
-                              state->quadratic_objective_term->vec_Rx_prod,
-                              state->quadratic_objective_term->vec_primal_obj_prod);
-
     state->quadratic_objective_term->lowrank_middle_type = (int)problem->objective_lowrank_middle_kind;
     state->quadratic_objective_term->d_middle_diag = NULL;
     state->quadratic_objective_term->d_middle_dense = NULL;
@@ -157,22 +127,22 @@ static void initialize_lowrank_component_obj(pdhg_solver_state_t *state, const p
     int rank = problem->num_rank_lowrank_obj;
     if (problem->objective_lowrank_middle_kind == PDHCG_D_DIAG && rank > 0)
     {
-        ALLOC_AND_COPY(state->quadratic_objective_term->d_middle_diag,
-                       problem->objective_lowrank_middle_diag,
-                       (size_t)rank * sizeof(double));
+        state->quadratic_objective_term->d_middle_diag = problem->objective_lowrank_middle_diag;
+        problem->objective_lowrank_middle_diag = NULL;
     }
     else if (problem->objective_lowrank_middle_kind == PDHCG_D_DENSE && rank > 0)
     {
-        size_t bytes = (size_t)rank * (size_t)rank * sizeof(double);
-        ALLOC_AND_COPY(state->quadratic_objective_term->d_middle_dense, problem->objective_lowrank_middle_dense, bytes);
+        state->quadratic_objective_term->d_middle_dense = problem->objective_lowrank_middle_dense;
+        problem->objective_lowrank_middle_dense = NULL;
         ALLOC_ZERO(state->quadratic_objective_term->Rx_buffer, (size_t)rank * sizeof(double));
     }
 }
 
-static void initialize_quadratic_obj_term(pdhg_solver_state_t *state, const processed_qp_problem_t *problem)
+static void initialize_quadratic_obj_term(pdhg_solver_state_t *state, processed_qp_problem_t *problem)
 {
     state->quadratic_objective_term = (quadratic_objective_term_t *)safe_calloc(1, sizeof(quadratic_objective_term_t));
     state->quadratic_objective_term->quad_obj_type = problem->quad_type;
+    state->quadratic_objective_term->num_rank_lowrank_obj = problem->num_rank_lowrank_obj;
 
     if (state->quadratic_objective_term->quad_obj_type == PDHCG_NON_Q)
         return;
@@ -207,9 +177,8 @@ static void initialize_quadratic_obj_term(pdhg_solver_state_t *state, const proc
     {
         case PDHCG_DIAG_Q:
         {
-            ALLOC_AND_COPY(state->quadratic_objective_term->diagonal_objective_matrix,
-                           problem->diagonal_quad_objective,
-                           n_local * sizeof(double));
+            state->quadratic_objective_term->diagonal_objective_matrix = problem->diagonal_quad_objective;
+            problem->diagonal_quad_objective = NULL;
             state->quadratic_objective_term->objective_sparse_matrix = NULL;
             state->quadratic_objective_term->objective_lowrank_matrix = NULL;
             break;
@@ -218,7 +187,6 @@ static void initialize_quadratic_obj_term(pdhg_solver_state_t *state, const proc
         case PDHCG_SPARSE_Q:
         {
             initialize_sparse_component_obj(state, problem);
-            DEVICE_CHECK(pdhcg_device_last_error());
             state->quadratic_objective_term->diagonal_objective_matrix = NULL;
             break;
         }
@@ -226,7 +194,6 @@ static void initialize_quadratic_obj_term(pdhg_solver_state_t *state, const proc
         case PDHCG_LOW_RANK_Q:
         {
             initialize_lowrank_component_obj(state, problem);
-            DEVICE_CHECK(pdhcg_device_last_error());
             state->quadratic_objective_term->diagonal_objective_matrix = NULL;
             break;
         }
@@ -234,9 +201,7 @@ static void initialize_quadratic_obj_term(pdhg_solver_state_t *state, const proc
         case PDHCG_LOW_RANK_PLUS_SPARSE_Q:
         {
             initialize_sparse_component_obj(state, problem);
-            DEVICE_CHECK(pdhcg_device_last_error());
             initialize_lowrank_component_obj(state, problem);
-            DEVICE_CHECK(pdhcg_device_last_error());
             state->quadratic_objective_term->diagonal_objective_matrix = NULL;
             break;
         }
@@ -400,8 +365,7 @@ initialize_cone_layout(cone_runtime_t *runtime, const cone_blocks_t *cones, cons
     int K = runtime->num_blocks;
 
     cone_proj_method_t *methods = (cone_proj_method_t *)safe_malloc(K * sizeof(cone_proj_method_t));
-    for (int i = 0; i < K; ++i)
-        methods[i] = pdhcg_device_cone_method(cones, i, coordinate_rescaling);
+    pdhcg_device_cone_methods(cones, coordinate_rescaling, methods);
 
     int bucket_count[NUM_CONE_TYPES][NUM_PROJ_METHODS] = {{0}};
     for (int i = 0; i < K; ++i)
@@ -519,16 +483,14 @@ static void initialize_infeasibility_cone_type(pdhg_solver_state_t *state, const
     free(type);
 }
 
-static void initialize_cone_runtime(pdhg_solver_state_t *state,
-                                    const qp_problem_t *working_problem,
-                                    const rescale_info_t *rescale_info)
+static void initialize_cone_runtime(pdhg_solver_state_t *state, const qp_problem_t *working_problem)
 {
     memset(&state->cones, 0, sizeof(state->cones));
     memset(&state->affine_cones, 0, sizeof(state->affine_cones));
     state->cones.axis = CONE_AXIS_VARIABLE;
     state->affine_cones.axis = CONE_AXIS_CONSTRAINT;
 
-    initialize_split_cones(state, rescale_info);
+    initialize_split_cones(state);
 
     bool has_global_cones = working_problem->cones.num_cones > 0 || state->cones.split != NULL ||
         pdhcg_get_global_num_cones(state->grid_context) > 0;
@@ -543,7 +505,7 @@ static void initialize_cone_runtime(pdhg_solver_state_t *state,
             pdhcg_device_copy(state->cones.is_fixed, working_problem->cones.is_fixed, fb, PDHCG_COPY_HOST_TO_DEVICE));
     }
 
-    initialize_cone_layout(&state->cones, &working_problem->cones, rescale_info->var_rescale);
+    initialize_cone_layout(&state->cones, &working_problem->cones, state->variable_rescaling);
     double global_has_power_cones = state->cones.has_power_cones ? 1.0 : 0.0;
     pdhcg_all_reduce_scalar(state->grid_context, &global_has_power_cones, PDHCG_OP_MAX, PDHCG_SCOPE_ROW, false);
     state->cones.has_power_cones = global_has_power_cones != 0.0;
@@ -552,7 +514,7 @@ static void initialize_cone_runtime(pdhg_solver_state_t *state,
     state->cones.has_psd_cones = global_has_psd_cones != 0.0;
     if (state->has_variable_cones)
     {
-        quad_obj_type_t qt = rescale_info->processed_problem ? rescale_info->processed_problem->quad_type : PDHCG_NON_Q;
+        quad_obj_type_t qt = state->quadratic_objective_term->quad_obj_type;
         size_t variable_bytes = (size_t)state->num_variables * sizeof(double);
         if (qt != PDHCG_NON_Q)
             DEVICE_CHECK(pdhcg_device_allocate((void **)&state->cones.effective_objective_gradient, variable_bytes));
@@ -563,148 +525,121 @@ static void initialize_cone_runtime(pdhg_solver_state_t *state,
     bool has_affine_cones = working_problem->affine_cones.num_cones > 0 || state->affine_cones.split != NULL ||
         pdhcg_get_global_num_affine_cones(state->grid_context) > 0;
 
-    int constraint_rows = state->num_constraints;
-    if (has_affine_cones && constraint_rows > 0)
+    if (has_affine_cones && state->num_constraints > 0)
     {
-        double *inverse_constraint_rescaling = (double *)safe_malloc((size_t)constraint_rows * sizeof(double));
-        for (int i = 0; i < constraint_rows; ++i)
-            inverse_constraint_rescaling[i] = 1.0 / rescale_info->con_rescale[i];
-        size_t constraint_bytes = (size_t)constraint_rows * sizeof(double);
+        size_t constraint_bytes = (size_t)state->num_constraints * sizeof(double);
         DEVICE_CHECK(pdhcg_device_allocate((void **)&state->affine_cones.coordinate_rescaling, constraint_bytes));
-        DEVICE_CHECK(pdhcg_device_copy(state->affine_cones.coordinate_rescaling,
-                                       inverse_constraint_rescaling,
-                                       constraint_bytes,
-                                       PDHCG_COPY_HOST_TO_DEVICE));
-        initialize_cone_layout(&state->affine_cones, &working_problem->affine_cones, inverse_constraint_rescaling);
-        free(inverse_constraint_rescaling);
     }
-
-    const double INV_SQRT2 = 0.7071067811865475;
-    for (int i = 0; i < working_problem->cones.num_cones; ++i)
-    {
-        const cone_blocks_t *cones = &working_problem->cones;
-        int aux0 = cones->start_idx[i] + cones->v_dim[i];
-        if (cones->type[i] == CONE_STANDARD_SOC)
-        {
-            int w_idx = aux0;
-            int z_idx = aux0 + 1;
-            bool w_pinned = (cones->is_fixed && cones->is_fixed[w_idx]);
-            bool z_pinned = (cones->is_fixed && cones->is_fixed[z_idx]);
-            double w_val = -INV_SQRT2 * rescale_info->con_bound_rescale * rescale_info->var_rescale[w_idx];
-            double z_val = INV_SQRT2 * rescale_info->con_bound_rescale * rescale_info->var_rescale[z_idx];
-            for (int which = 0; which < 4; ++which)
-            {
-                double *dst = (which == 0       ? state->initial_primal_solution
-                                   : which == 1 ? state->current_primal_solution
-                                   : which == 2 ? state->pdhg_primal_solution
-                                                : state->reflected_primal_solution);
-                if (!w_pinned)
-                    DEVICE_CHECK(pdhcg_device_copy(dst + w_idx, &w_val, sizeof(double), PDHCG_COPY_HOST_TO_DEVICE));
-                if (!z_pinned)
-                    DEVICE_CHECK(pdhcg_device_copy(dst + z_idx, &z_val, sizeof(double), PDHCG_COPY_HOST_TO_DEVICE));
-            }
-        }
-        else if (cones->type[i] == CONE_EXPONENTIAL || cones->type[i] == CONE_POWER || cones->type[i] == CONE_PSD)
-        {
-            /* The zero vector is feasible for these cones. */
-        }
-        else
-        {
-            int t_idx = aux0 + 1;
-            bool t_pinned = (cones->is_fixed && cones->is_fixed[t_idx]);
-            double t_val = rescale_info->con_bound_rescale * rescale_info->var_rescale[t_idx];
-            for (int which = 0; which < 4; ++which)
-            {
-                double *dst = (which == 0       ? state->initial_primal_solution
-                                   : which == 1 ? state->current_primal_solution
-                                   : which == 2 ? state->pdhg_primal_solution
-                                                : state->reflected_primal_solution);
-                if (!t_pinned)
-                    DEVICE_CHECK(pdhcg_device_copy(dst + t_idx, &t_val, sizeof(double), PDHCG_COPY_HOST_TO_DEVICE));
-            }
-        }
-    }
+    pdhcg_device_initialize_cone_scaling_and_primal(state);
+    initialize_cone_layout(
+        &state->affine_cones, &working_problem->affine_cones, state->affine_cones.coordinate_rescaling);
 }
 
 pdhg_solver_state_t *initialize_solver_state(const pdhg_parameters_t *params,
                                              const qp_problem_t *working_problem,
-                                             const rescale_info_t *rescale_info,
+                                             const qp_problem_t *device_problem,
                                              grid_context_t *grid_context)
 {
     pdhg_solver_state_t *state = (pdhg_solver_state_t *)safe_calloc(1, sizeof(pdhg_solver_state_t));
 
     state->grid_context = grid_context;
 
-    int n_vars = rescale_info->scaled_problem->num_variables;
-    int n_cons = rescale_info->scaled_problem->num_constraints;
+    int n_vars = device_problem->num_variables;
+    int n_cons = device_problem->num_constraints;
     size_t var_bytes = n_vars * sizeof(double);
     size_t con_bytes = n_cons * sizeof(double);
 
     state->num_variables = n_vars;
     state->num_constraints = n_cons;
-    state->objective_constant = rescale_info->scaled_problem->objective_constant;
-
-    state->constraint_matrix = (device_sparse_matrix_csr_t *)safe_malloc(sizeof(device_sparse_matrix_csr_t));
-    state->constraint_matrix_t = (device_sparse_matrix_csr_t *)safe_malloc(sizeof(device_sparse_matrix_csr_t));
-
-    state->constraint_matrix->num_rows = n_cons;
-    state->constraint_matrix->num_cols = n_vars;
-    state->constraint_matrix->num_nonzeros = rescale_info->scaled_problem->constraint_matrix_num_nonzeros;
-
-    state->constraint_matrix_t->num_rows = n_vars;
-    state->constraint_matrix_t->num_cols = n_cons;
-    state->constraint_matrix_t->num_nonzeros = rescale_info->scaled_problem->constraint_matrix_num_nonzeros;
-
-    state->termination_reason = TERMINATION_REASON_UNSPECIFIED;
-
-    state->rescaling_time_sec = rescale_info->rescaling_time_sec;
-
-    ALLOC_AND_COPY_CSR(state->constraint_matrix,
-                       rescale_info->scaled_problem->constraint_matrix,
-                       rescale_info->scaled_problem->num_constraints,
-                       rescale_info->scaled_problem->constraint_matrix_num_nonzeros);
-
-    DEVICE_CHECK(pdhcg_device_allocate((void **)&state->constraint_matrix_t->row_ptr, (n_vars + 1) * sizeof(int)));
-    DEVICE_CHECK(pdhcg_device_allocate((void **)&state->constraint_matrix_t->col_ind,
-                                       rescale_info->scaled_problem->constraint_matrix_num_nonzeros * sizeof(int)));
-    DEVICE_CHECK(pdhcg_device_allocate((void **)&state->constraint_matrix_t->val,
-                                       rescale_info->scaled_problem->constraint_matrix_num_nonzeros * sizeof(double)));
+    state->objective_constant = device_problem->objective_constant;
 
     DEVICE_CHECK(pdhcg_device_sparse_create(&state->sparse_handle));
     DEVICE_CHECK(pdhcg_device_blas_create(&state->blas_handle));
     DEVICE_CHECK(pdhcg_device_set_pointer_mode(state->blas_handle, PDHCG_POINTER_HOST));
-    if (state->constraint_matrix->num_nonzeros > 0)
+    DEVICE_CHECK(pdhcg_device_allocate((void **)&state->constraint_rescaling, con_bytes));
+    DEVICE_CHECK(pdhcg_device_allocate((void **)&state->variable_rescaling, var_bytes));
+
+    quad_obj_type_t quad_type;
+#ifdef PDHCG_COMPILE_DISTRIBUTED
+    if (grid_context)
+        quad_type = grid_context->quad_type;
+    else
+#endif
+        quad_type = detect_q_type(working_problem->objective_sparse_matrix,
+                                  working_problem->objective_lowrank_matrix,
+                                  n_vars,
+                                  working_problem->num_rank_lowrank_obj);
+
+    processed_qp_problem_t *processed =
+        preprocess_qp_problem(working_problem, device_problem, quad_type, get_n_start(grid_context));
+
+    state->constraint_matrix = (device_sparse_matrix_csr_t *)safe_malloc(sizeof(device_sparse_matrix_csr_t));
+
+    state->constraint_matrix->num_rows = n_cons;
+    state->constraint_matrix->num_cols = n_vars;
+    state->constraint_matrix->num_nonzeros = device_problem->constraint_matrix_num_nonzeros;
+
+    state->termination_reason = TERMINATION_REASON_UNSPECIFIED;
+
+    ALLOC_AND_COPY_DEVICE_CSR(state->constraint_matrix,
+                              device_problem->constraint_matrix,
+                              device_problem->num_constraints,
+                              device_problem->constraint_matrix_num_nonzeros);
+
+    state->constraint_matrix_t = (device_sparse_matrix_csr_t *)safe_malloc(sizeof(device_sparse_matrix_csr_t));
+    state->constraint_matrix_t->num_rows = n_vars;
+    state->constraint_matrix_t->num_cols = n_cons;
+    state->constraint_matrix_t->num_nonzeros = state->constraint_matrix->num_nonzeros;
+    DEVICE_CHECK(
+        pdhcg_device_allocate((void **)&state->constraint_matrix_t->row_ptr, ((size_t)n_vars + 1) * sizeof(int)));
+    DEVICE_CHECK(pdhcg_device_allocate((void **)&state->constraint_matrix_t->col_ind,
+                                       (size_t)state->constraint_matrix->num_nonzeros * sizeof(int)));
+    DEVICE_CHECK(pdhcg_device_allocate((void **)&state->constraint_matrix_t->val,
+                                       (size_t)state->constraint_matrix->num_nonzeros * sizeof(double)));
+    DEVICE_CHECK(pdhcg_device_csr_transpose(state->sparse_handle,
+                                            state->constraint_matrix->num_rows,
+                                            state->constraint_matrix->num_cols,
+                                            state->constraint_matrix->num_nonzeros,
+                                            state->constraint_matrix->val,
+                                            state->constraint_matrix->row_ptr,
+                                            state->constraint_matrix->col_ind,
+                                            state->constraint_matrix_t->val,
+                                            state->constraint_matrix_t->row_ptr,
+                                            state->constraint_matrix_t->col_ind));
+    ALLOC_AND_COPY_DEVICE(state->variable_lower_bound, device_problem->variable_lower_bound, var_bytes);
+    ALLOC_AND_COPY_DEVICE(state->variable_upper_bound, device_problem->variable_upper_bound, var_bytes);
+    ALLOC_AND_COPY_DEVICE(state->objective_vector, device_problem->objective_vector, var_bytes);
+    ALLOC_AND_COPY_DEVICE(state->constraint_lower_bound, device_problem->constraint_lower_bound, con_bytes);
+    ALLOC_AND_COPY_DEVICE(state->constraint_upper_bound, device_problem->constraint_upper_bound, con_bytes);
+    ALLOC_AND_COPY_DEVICE(state->affine_cone_offset, device_problem->affine_cone_offset, con_bytes);
+
+    if (device_problem->primal_start)
     {
-        DEVICE_CHECK(pdhcg_device_csr_transpose(state->sparse_handle,
-                                                state->constraint_matrix->num_rows,
-                                                state->constraint_matrix->num_cols,
-                                                state->constraint_matrix->num_nonzeros,
-                                                state->constraint_matrix->val,
-                                                state->constraint_matrix->row_ptr,
-                                                state->constraint_matrix->col_ind,
-                                                state->constraint_matrix_t->val,
-                                                state->constraint_matrix_t->row_ptr,
-                                                state->constraint_matrix_t->col_ind));
+        ALLOC_AND_COPY_DEVICE(state->initial_primal_solution, device_problem->primal_start, var_bytes);
     }
     else
     {
-        DEVICE_CHECK(
-            pdhcg_device_zero(state->constraint_matrix_t->row_ptr, 0, (state->num_variables + 1) * sizeof(int)));
+        ALLOC_ZERO(state->initial_primal_solution, var_bytes);
     }
+    if (device_problem->dual_start)
+    {
+        ALLOC_AND_COPY_DEVICE(state->initial_dual_solution, device_problem->dual_start, con_bytes);
+    }
+    else
+    {
+        ALLOC_ZERO(state->initial_dual_solution, con_bytes);
+    }
+
+    initialize_quadratic_obj_term(state, processed);
+    free_processed_qp_problem(processed);
+
+    /* Scale state storage before creating SpMV contexts and derived solver data. */
+    double start_rescaling = monotonic_time_seconds();
+    pdhcg_device_rescale_problem(params, device_problem, state);
     DEVICE_CHECK(pdhcg_device_last_error());
-    ALLOC_AND_COPY(state->variable_lower_bound, rescale_info->scaled_problem->variable_lower_bound, var_bytes);
-    ALLOC_AND_COPY(state->variable_upper_bound, rescale_info->scaled_problem->variable_upper_bound, var_bytes);
-    ALLOC_AND_COPY(state->objective_vector, rescale_info->scaled_problem->objective_vector, var_bytes);
-    ALLOC_AND_COPY(state->constraint_lower_bound, rescale_info->scaled_problem->constraint_lower_bound, con_bytes);
-    ALLOC_AND_COPY(state->constraint_upper_bound, rescale_info->scaled_problem->constraint_upper_bound, con_bytes);
-    ALLOC_AND_COPY(state->affine_cone_offset, rescale_info->scaled_problem->affine_cone_offset, con_bytes);
-    ALLOC_AND_COPY(state->constraint_rescaling, rescale_info->con_rescale, con_bytes);
-    ALLOC_AND_COPY(state->variable_rescaling, rescale_info->var_rescale, var_bytes);
+    DEVICE_CHECK(pdhcg_device_synchronize());
+    state->rescaling_time_sec = monotonic_time_seconds() - start_rescaling;
 
-    state->constraint_bound_rescaling = rescale_info->con_bound_rescale;
-    state->objective_vector_rescaling = rescale_info->obj_vec_rescale;
-
-    ALLOC_ZERO(state->initial_primal_solution, var_bytes);
     ALLOC_ZERO(state->current_primal_solution, var_bytes);
     ALLOC_ZERO(state->pdhg_primal_solution, var_bytes);
     ALLOC_ZERO(state->reflected_primal_solution, var_bytes);
@@ -714,7 +649,6 @@ pdhg_solver_state_t *initialize_solver_state(const pdhg_parameters_t *params,
     ALLOC_ZERO(state->dual_residual, var_bytes);
     ALLOC_ZERO(state->delta_primal_solution, var_bytes);
 
-    ALLOC_ZERO(state->initial_dual_solution, con_bytes);
     ALLOC_ZERO(state->current_dual_solution, con_bytes);
     ALLOC_ZERO(state->pdhg_dual_solution, con_bytes);
     ALLOC_ZERO(state->reflected_dual_solution, con_bytes);
@@ -723,50 +657,11 @@ pdhg_solver_state_t *initialize_solver_state(const pdhg_parameters_t *params,
     ALLOC_ZERO(state->primal_residual, con_bytes);
     ALLOC_ZERO(state->delta_dual_solution, con_bytes);
 
-    if (working_problem->primal_start)
-    {
-        double *rescaled = (double *)safe_malloc(var_bytes);
-        for (int i = 0; i < n_vars; ++i)
-            rescaled[i] =
-                working_problem->primal_start[i] * rescale_info->var_rescale[i] * rescale_info->con_bound_rescale;
-        DEVICE_CHECK(pdhcg_device_copy(state->initial_primal_solution, rescaled, var_bytes, PDHCG_COPY_HOST_TO_DEVICE));
-        DEVICE_CHECK(pdhcg_device_copy(state->current_primal_solution, rescaled, var_bytes, PDHCG_COPY_HOST_TO_DEVICE));
-        DEVICE_CHECK(pdhcg_device_copy(state->pdhg_primal_solution, rescaled, var_bytes, PDHCG_COPY_HOST_TO_DEVICE));
-        free(rescaled);
-    }
-    if (working_problem->dual_start)
-    {
-        double *rescaled = (double *)safe_malloc(con_bytes);
-        for (int i = 0; i < n_cons; ++i)
-            rescaled[i] = working_problem->dual_start[i] * rescale_info->con_rescale[i] * rescale_info->obj_vec_rescale;
-        DEVICE_CHECK(pdhcg_device_copy(state->initial_dual_solution, rescaled, con_bytes, PDHCG_COPY_HOST_TO_DEVICE));
-        DEVICE_CHECK(pdhcg_device_copy(state->current_dual_solution, rescaled, con_bytes, PDHCG_COPY_HOST_TO_DEVICE));
-        DEVICE_CHECK(pdhcg_device_copy(state->pdhg_dual_solution, rescaled, con_bytes, PDHCG_COPY_HOST_TO_DEVICE));
-        free(rescaled);
-    }
-    DEVICE_CHECK(pdhcg_device_last_error());
-    double *temp_host = (double *)safe_malloc(fmax(var_bytes, con_bytes));
-    for (int i = 0; i < n_cons; ++i)
-        temp_host[i] = isfinite(rescale_info->scaled_problem->constraint_lower_bound[i])
-            ? rescale_info->scaled_problem->constraint_lower_bound[i]
-            : 0.0;
-    ALLOC_AND_COPY(state->constraint_lower_bound_finite_val, temp_host, con_bytes);
-    for (int i = 0; i < n_cons; ++i)
-        temp_host[i] = isfinite(rescale_info->scaled_problem->constraint_upper_bound[i])
-            ? rescale_info->scaled_problem->constraint_upper_bound[i]
-            : 0.0;
-    ALLOC_AND_COPY(state->constraint_upper_bound_finite_val, temp_host, con_bytes);
-    for (int i = 0; i < n_vars; ++i)
-        temp_host[i] = isfinite(rescale_info->scaled_problem->variable_lower_bound[i])
-            ? rescale_info->scaled_problem->variable_lower_bound[i]
-            : 0.0;
-    ALLOC_AND_COPY(state->variable_lower_bound_finite_val, temp_host, var_bytes);
-    for (int i = 0; i < n_vars; ++i)
-        temp_host[i] = isfinite(rescale_info->scaled_problem->variable_upper_bound[i])
-            ? rescale_info->scaled_problem->variable_upper_bound[i]
-            : 0.0;
-    ALLOC_AND_COPY(state->variable_upper_bound_finite_val, temp_host, var_bytes);
-    free(temp_host);
+    DEVICE_CHECK(pdhcg_device_copy(
+        state->current_dual_solution, state->initial_dual_solution, con_bytes, PDHCG_COPY_DEVICE_TO_DEVICE));
+    DEVICE_CHECK(pdhcg_device_copy(
+        state->pdhg_dual_solution, state->initial_dual_solution, con_bytes, PDHCG_COPY_DEVICE_TO_DEVICE));
+    pdhcg_device_initialize_finite_bounds(state);
 
     double sum_of_squares = 0.0;
     double max_val = 0.0;
@@ -880,12 +775,47 @@ pdhg_solver_state_t *initialize_solver_state(const pdhg_parameters_t *params,
                                                state->vec_dual_sol,
                                                state->vec_dual_prod);
 
+    quadratic_objective_term_t *term = state->quadratic_objective_term;
+    if (quadratic_type_has_sparse_component(term->quad_obj_type))
+    {
+        term->spmv_ctx_Q = pdhcg_spmv_ctx_create(state->sparse_handle,
+                                                 term->objective_sparse_matrix->num_rows,
+                                                 state->num_variables,
+                                                 term->objective_sparse_matrix->num_nonzeros,
+                                                 term->objective_sparse_matrix->row_ptr,
+                                                 term->objective_sparse_matrix->col_ind,
+                                                 term->objective_sparse_matrix->val,
+                                                 state->vec_primal_sol,
+                                                 term->vec_global_primal_obj_prod);
+    }
+    if (quadratic_type_has_lowrank_component(term->quad_obj_type))
+    {
+        term->spmv_ctx_R = pdhcg_spmv_ctx_create(state->sparse_handle,
+                                                 term->num_rank_lowrank_obj,
+                                                 state->num_variables,
+                                                 term->objective_lowrank_matrix->num_nonzeros,
+                                                 term->objective_lowrank_matrix->row_ptr,
+                                                 term->objective_lowrank_matrix->col_ind,
+                                                 term->objective_lowrank_matrix->val,
+                                                 state->vec_primal_sol,
+                                                 term->vec_Rx_prod);
+
+        term->spmv_ctx_Rt = pdhcg_spmv_ctx_create(state->sparse_handle,
+                                                  state->num_variables,
+                                                  term->num_rank_lowrank_obj,
+                                                  term->objective_lowrank_matrix_t->num_nonzeros,
+                                                  term->objective_lowrank_matrix_t->row_ptr,
+                                                  term->objective_lowrank_matrix_t->col_ind,
+                                                  term->objective_lowrank_matrix_t->val,
+                                                  term->vec_Rx_prod,
+                                                  term->vec_primal_obj_prod);
+    }
+
     state->num_original_variables = working_problem->num_original_variables;
-    initialize_cone_runtime(state, working_problem, rescale_info);
+    initialize_cone_runtime(state, working_problem);
     if (state->has_variable_cones)
     {
         project_cone_runtime(state, &state->cones, state->initial_primal_solution, state->cones.projection_workspace);
-        DEVICE_CHECK(pdhcg_device_last_error());
     }
     if (state->num_variables > 0)
     {
@@ -893,8 +823,8 @@ pdhg_solver_state_t *initialize_solver_state(const pdhg_parameters_t *params,
                                                 state->variable_lower_bound,
                                                 state->variable_upper_bound,
                                                 state->num_variables);
-        DEVICE_CHECK(pdhcg_device_last_error());
     }
+    DEVICE_CHECK(pdhcg_device_last_error());
     DEVICE_CHECK(pdhcg_device_copy(
         state->current_primal_solution, state->initial_primal_solution, var_bytes, PDHCG_COPY_DEVICE_TO_DEVICE));
     DEVICE_CHECK(pdhcg_device_copy(
@@ -902,7 +832,6 @@ pdhg_solver_state_t *initialize_solver_state(const pdhg_parameters_t *params,
     DEVICE_CHECK(pdhcg_device_copy(
         state->reflected_primal_solution, state->initial_primal_solution, var_bytes, PDHCG_COPY_DEVICE_TO_DEVICE));
 
-    initialize_quadratic_obj_term(state, rescale_info->processed_problem);
     state->use_linearized_quadratic_update = uses_linearized_quadratic_update(
         params->non_diagonal_quadratic_mode, state->quadratic_objective_term->quad_obj_type);
     initialize_quadratic_term_information(state, params);
@@ -963,21 +892,7 @@ pdhg_solver_state_t *initialize_solver_state(const pdhg_parameters_t *params,
                "----------"
                "----------------------\n");
     }
-
     return state;
-}
-
-static void free_device_csr(device_sparse_matrix_csr_t *matrix)
-{
-    if (!matrix)
-        return;
-    if (matrix->row_ptr)
-        DEVICE_CHECK(pdhcg_device_free(matrix->row_ptr));
-    if (matrix->col_ind)
-        DEVICE_CHECK(pdhcg_device_free(matrix->col_ind));
-    if (matrix->val)
-        DEVICE_CHECK(pdhcg_device_free(matrix->val));
-    free(matrix);
 }
 
 void pdhg_solver_state_free(pdhg_solver_state_t *state)
@@ -1183,21 +1098,4 @@ void pdhg_solver_state_free(pdhg_solver_state_t *state)
     free_split_cones(state);
 
     free(state);
-}
-
-void rescale_info_free(rescale_info_t *info)
-{
-    if (info == NULL)
-    {
-        return;
-    }
-    if (info->processed_problem)
-    {
-        free_processed_qp_problem(info->processed_problem);
-    }
-    qp_problem_free(info->scaled_problem);
-    free(info->con_rescale);
-    free(info->var_rescale);
-
-    free(info);
 }
