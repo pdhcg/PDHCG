@@ -1,0 +1,11 @@
+Three.js 0.180.0 (MIT), bundled with esbuild 0.25.10.
+Source: https://github.com/mrdoob/three.js/tree/r180
+License: THREE-LICENSE.txt (preserved in full).
+
+The entry file exports only the classes used by the saddle renderer.
+To rebuild in a temporary directory with Node/npm:
+  npm install --prefix /tmp/pdhcg-render-deps three@0.180.0 esbuild@0.25.10 --ignore-scripts
+  cp docs/javascripts/vendor/three-entry.js /tmp/pdhcg-render-deps/entry.js
+  /tmp/pdhcg-render-deps/node_modules/.bin/esbuild /tmp/pdhcg-render-deps/entry.js --bundle --format=esm --minify --legal-comments=linked --outfile=docs/javascripts/vendor/three.mjs
+
+The site serves this module locally; rendering does not depend on a CDN.
