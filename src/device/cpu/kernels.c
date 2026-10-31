@@ -286,6 +286,45 @@ void pdhcg_device_finish_constraint_dual_update(const double *current_dual,
     }
 }
 
+void pdhcg_device_dual_and_halpern_update(const double *initial_primal,
+                                          double *current_primal,
+                                          const double *reflected_primal,
+                                          const double *initial_dual,
+                                          double *current_dual,
+                                          double *reflected_dual,
+                                          const double *primal_product,
+                                          const double *affine_cone_offset,
+                                          const double *lower_bound,
+                                          const double *upper_bound,
+                                          int n_vars,
+                                          int n_cons,
+                                          double dual_step_size,
+                                          double weight,
+                                          double reflection_coeff)
+{
+#pragma omp parallel for schedule(static) if ((n_vars + n_cons) >= 1024)
+    for (int i = 0; i < n_vars + n_cons; ++i)
+    {
+        if (i < n_vars)
+        {
+            double reflected = reflection_coeff * reflected_primal[i] + (1.0 - reflection_coeff) * current_primal[i];
+            current_primal[i] = weight * reflected + (1.0 - weight) * initial_primal[i];
+        }
+        else
+        {
+            int idx = i - n_vars;
+            double current = current_dual[idx];
+            double value = primal_product[idx] + affine_cone_offset[idx];
+            double projected = fmax(lower_bound[idx], fmin(value - current / dual_step_size, upper_bound[idx]));
+            double next = current - dual_step_size * value + dual_step_size * projected;
+            double dual_reflection = 2.0 * next - current;
+            reflected_dual[idx] = dual_reflection;
+            double reflected = reflection_coeff * dual_reflection + (1.0 - reflection_coeff) * current;
+            current_dual[idx] = weight * reflected + (1.0 - weight) * initial_dual[idx];
+        }
+    }
+}
+
 void pdhcg_device_halpern_update(const double *initial_primal,
                                  double *current_primal,
                                  const double *reflected_primal,

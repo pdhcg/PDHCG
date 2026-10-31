@@ -306,7 +306,11 @@ static py::dict get_default_params_py()
     d["artificial_restart_threshold"] = p.restart_params.artificial_restart_threshold;
     d["sufficient_reduction_for_restart"] = p.restart_params.sufficient_reduction_for_restart;
     d["necessary_reduction_for_restart"] = p.restart_params.necessary_reduction_for_restart;
+
     d["k_p"] = p.restart_params.k_p;
+    d["k_i"] = p.restart_params.k_i;
+    d["k_d"] = p.restart_params.k_d;
+    d["i_smooth"] = p.restart_params.i_smooth;
 
     // reflection
     d["reflection_coefficient"] = p.reflection_coefficient;
@@ -426,7 +430,11 @@ static void parse_params_from_python(py::object params_obj, pdhg_parameters_t *p
     getf("artificial_restart_threshold", p->restart_params.artificial_restart_threshold);
     getf("sufficient_reduction_for_restart", p->restart_params.sufficient_reduction_for_restart);
     getf("necessary_reduction_for_restart", p->restart_params.necessary_reduction_for_restart);
+
     getf("k_p", p->restart_params.k_p);
+    getf("k_i", p->restart_params.k_i);
+    getf("k_d", p->restart_params.k_d);
+    getf("i_smooth", p->restart_params.i_smooth);
 
     // reflection
     getf("reflection_coefficient", p->reflection_coefficient);

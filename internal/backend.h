@@ -47,6 +47,7 @@ typedef struct
     int (*postsolve)(const pdhcg_presolve_info_t *, pdhcg_result_t *, const qp_problem_t *);
     void (*free_presolve)(pdhcg_presolve_info_t *);
     void *(*allocate_host)(size_t);
+    double (*wall_time)(void);
     const char *(*termination_name)(termination_reason_t);
     int (*cone_size)(cone_type_t, int);
     int (*cone_block_size)(const cone_blocks_t *, int);

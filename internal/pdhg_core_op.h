@@ -31,6 +31,9 @@ extern "C"
     void update_obj_product(pdhg_solver_state_t *state, double *primal_solution);
     double compute_xQx(pdhg_solver_state_t *state, double *primal_sol, double *primal_obj_product);
     void pdhg_update(pdhg_solver_state_t *state);
+    /* Run any fixed-point/restart checks before calling this. */
+    void pdhg_update_and_halpern(pdhg_solver_state_t *state, double reflection_coefficient);
+
     void halpern_update(pdhg_solver_state_t *state, double reflection_coefficient);
 
     void rescale_solution(pdhg_solver_state_t *state);

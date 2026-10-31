@@ -183,6 +183,8 @@ static FastLineReader *fast_reader_open(const char *filename)
             free(reader);
             return NULL;
         }
+        /* A larger zlib buffer helps when reading large .mps.gz files. */
+        (void)gzbuffer(reader->handle.gz_f, 128 * 1024);
     }
     else
     {
@@ -340,6 +342,8 @@ typedef struct
     int error_flag;
 
     QcMatrixAccum *qc_accums;
+    /* Row -> accumulator index + 1; zero means no QCMATRIX seen yet. */
+    int *qc_accum_by_row;
     size_t num_qc_accums;
     size_t qc_accums_capacity;
     int qc_current_accum;
@@ -991,13 +995,13 @@ static int open_qcmatrix_row(MpsParserState *state, const char *row_name)
         return 0;
     }
 
-    for (size_t i = 0; i < state->num_qc_accums; ++i)
+    if (!state->qc_accum_by_row)
+        state->qc_accum_by_row = (int *)safe_calloc(state->row_map.size, sizeof(int));
+    int existing = state->qc_accum_by_row[row_idx];
+    if (existing != 0)
     {
-        if (state->qc_accums[i].row_idx == row_idx)
-        {
-            state->qc_current_accum = (int)i;
-            return 0;
-        }
+        state->qc_current_accum = existing - 1;
+        return 0;
     }
 
     if (state->num_qc_accums >= state->qc_accums_capacity)
@@ -1011,6 +1015,7 @@ static int open_qcmatrix_row(MpsParserState *state, const char *row_name)
     }
     state->qc_accums[state->num_qc_accums].row_idx = row_idx;
     state->qc_current_accum = (int)state->num_qc_accums;
+    state->qc_accum_by_row[row_idx] = state->qc_current_accum + 1;
     state->num_qc_accums++;
     return 0;
 }
@@ -1254,6 +1259,7 @@ static void free_parser_state(MpsParserState *state)
     free(state->coo_matrix_q.row_indices);
     free(state->coo_matrix_q.col_indices);
     free(state->coo_matrix_q.values);
+    free(state->qc_accum_by_row);
 
     if (state->qc_accums)
     {

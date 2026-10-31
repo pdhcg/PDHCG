@@ -19,6 +19,8 @@ limitations under the License.
 
 #include <math.h>
 #include <stdio.h>
+#include <string.h>
+#include <zlib.h>
 
 #define CHECK(condition)                                                                                               \
     do                                                                                                                 \
@@ -250,6 +252,71 @@ static int test_optional_and_unsupported_sections(void)
     return 0;
 }
 
+static int test_repeated_qcmatrix_sections(int compressed)
+{
+    /* More rows than the initial accumulator capacity exercise reallocations.
+       Visit rows in reverse order, then append to each in forward order. */
+    enum { NUM_ROWS = 24 };
+    char model[8192];
+    size_t used = (size_t)snprintf(model, sizeof(model), "NAME QCINDEX\nROWS\n N OBJ\n");
+    for (int row = 0; row < NUM_ROWS; ++row)
+        used += (size_t)snprintf(model + used, sizeof(model) - used, " L R%d\n", row);
+    used += (size_t)snprintf(model + used,
+                            sizeof(model) - used,
+                            "COLUMNS\n X OBJ 1\n Y OBJ 0\nQCMATRIX OBJ\n X X 2\n");
+    for (int row = NUM_ROWS - 1; row >= 0; --row)
+        used += (size_t)snprintf(model + used,
+                                sizeof(model) - used,
+                                "QCMATRIX R%d\n X X %d\n",
+                                row,
+                                row + 1);
+    used += (size_t)snprintf(model + used,
+                            sizeof(model) - used,
+                            "QCMATRIX UNKNOWN\n X X 999\nQCMATRIX OBJ\n Y Y 3\n");
+    for (int row = 0; row < NUM_ROWS; ++row)
+        used += (size_t)snprintf(model + used,
+                                sizeof(model) - used,
+                                "QCMATRIX R%d\n Y Y %d\n",
+                                row,
+                                2 * (row + 1));
+    used += (size_t)snprintf(model + used, sizeof(model) - used, "ENDATA\n");
+    CHECK(used < sizeof(model));
+
+    const char *path = compressed ? "test_mps_parser_qcmatrix_tmp.mps.gz" : "test_mps_parser_qcmatrix_tmp.mps";
+    if (compressed)
+    {
+        gzFile file = gzopen(path, "wb");
+        CHECK(file != NULL);
+        int write_ok = gzputs(file, model) >= 0;
+        int close_status = gzclose(file);
+        CHECK(write_ok && close_status == Z_OK);
+    }
+    else
+        CHECK(write_model(path, model));
+    qp_problem_t *problem = read_mps_file(path);
+    remove(path);
+    CHECK(problem != NULL);
+    CHECK(problem->num_variables == 2);
+    CHECK(problem->num_constraints == NUM_ROWS);
+    CHECK(problem->num_quadratic_constraints == NUM_ROWS);
+    CHECK(problem->objective_sparse_matrix_num_nonzeros == 2);
+    CHECK(check_close(problem->objective_sparse_matrix->val[0], 2.0));
+    CHECK(check_close(problem->objective_sparse_matrix->val[1], 3.0));
+    for (int qc = 0; qc < NUM_ROWS; ++qc)
+    {
+        int row = NUM_ROWS - 1 - qc;
+        CHECK(problem->quadratic_constraint_row_indices[qc] == row);
+        CHECK(problem->quadratic_constraint_matrix_num_nonzeros[qc] == 2);
+        const CsrComponent *matrix = problem->quadratic_constraint_matrices[qc];
+        CHECK(matrix->row_ptr[0] == 0 && matrix->row_ptr[1] == 1 && matrix->row_ptr[2] == 2);
+        CHECK(matrix->col_ind[0] == 0 && matrix->col_ind[1] == 1);
+        CHECK(check_close(matrix->val[0], (double)(row + 1)));
+        CHECK(check_close(matrix->val[1], 2.0 * (row + 1)));
+    }
+    qp_problem_free(problem);
+    return 0;
+}
+
 int main(void)
 {
     CHECK(test_missing_file() == 0);
@@ -258,5 +325,7 @@ int main(void)
     CHECK(test_no_objective_row() == 0);
     CHECK(test_multiline_objective_sense() == 0);
     CHECK(test_optional_and_unsupported_sections() == 0);
+    CHECK(test_repeated_qcmatrix_sections(0) == 0);
+    CHECK(test_repeated_qcmatrix_sections(1) == 0);
     return 0;
 }

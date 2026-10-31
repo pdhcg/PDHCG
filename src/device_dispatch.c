@@ -258,6 +258,11 @@ void *safe_malloc(size_t size)
     return host_backend()->allocate_host(size);
 }
 
+double monotonic_time_seconds(void)
+{
+    return host_backend()->wall_time();
+}
+
 const char *termination_reason_to_string(termination_reason_t reason)
 {
     return host_backend()->termination_name(reason);

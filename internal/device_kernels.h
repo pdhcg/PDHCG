@@ -128,6 +128,22 @@ extern "C"
                                                     double *reflected_dual,
                                                     int n,
                                                     double step_size);
+    void pdhcg_device_dual_and_halpern_update(const double *initial_primal,
+                                              double *current_primal,
+                                              const double *reflected_primal,
+                                              const double *initial_dual,
+                                              double *current_dual,
+                                              double *reflected_dual,
+                                              const double *primal_product,
+                                              const double *affine_cone_offset,
+                                              const double *lower_bound,
+                                              const double *upper_bound,
+                                              int n_vars,
+                                              int n_cons,
+                                              double dual_step_size,
+                                              double weight,
+                                              double reflection_coeff);
+
     void pdhcg_device_halpern_update(const double *initial_primal,
                                      double *current_primal,
                                      const double *reflected_primal,

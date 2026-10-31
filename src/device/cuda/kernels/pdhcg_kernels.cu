@@ -558,6 +558,70 @@ void pdhcg_device_finish_constraint_dual_update(const double *current_dual,
                                                                        step_size);
 }
 
+__global__ void dual_and_halpern_update_kernel(const double *initial_primal,
+                                               double *current_primal,
+                                               const double *reflected_primal,
+                                               const double *initial_dual,
+                                               double *current_dual,
+                                               double *reflected_dual,
+                                               const double *primal_product,
+                                               const double *affine_cone_offset,
+                                               const double *lower_bound,
+                                               const double *upper_bound,
+                                               int n_vars,
+                                               int n_cons,
+                                               double dual_step_size,
+                                               double weight,
+                                               double reflection_coeff)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n_vars)
+    {
+        double reflected = reflection_coeff * reflected_primal[i] + (1.0 - reflection_coeff) * current_primal[i];
+        current_primal[i] = weight * reflected + (1.0 - weight) * initial_primal[i];
+    }
+    else if (i < n_vars + n_cons)
+    {
+        int idx = i - n_vars;
+        double current = current_dual[idx];
+        double value = primal_product[idx] + affine_cone_offset[idx];
+        double next = next_constraint_dual(current, value, lower_bound[idx], upper_bound[idx], dual_step_size);
+        /* Preserve the reflection for later diagnostic code. */
+        double dual_reflection = 2.0 * next - current;
+        reflected_dual[idx] = dual_reflection;
+        /* Match the separate kernels: round these products before the sums
+           rather than letting fusion change the selected multiply-add. */
+        double weighted_current = __dmul_rn(1.0 - reflection_coeff, current);
+        double reflected = reflection_coeff * dual_reflection + weighted_current;
+        current_dual[idx] = __dmul_rn(weight, reflected) + (1.0 - weight) * initial_dual[idx];
+    }
+}
+
+void pdhcg_device_dual_and_halpern_update(const double *initial_primal,
+                                          double *current_primal,
+                                          const double *reflected_primal,
+                                          const double *initial_dual,
+                                          double *current_dual,
+                                          double *reflected_dual,
+                                          const double *primal_product,
+                                          const double *affine_cone_offset,
+                                          const double *lower_bound,
+                                          const double *upper_bound,
+                                          int n_vars,
+                                          int n_cons,
+                                          double dual_step_size,
+                                          double weight,
+                                          double reflection_coeff)
+{
+    int count = n_vars + n_cons;
+    if (count <= 0)
+        return;
+    dual_and_halpern_update_kernel<<<(count + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK, THREADS_PER_BLOCK>>>(
+        initial_primal, current_primal, reflected_primal, initial_dual, current_dual, reflected_dual,
+        primal_product, affine_cone_offset, lower_bound, upper_bound, n_vars, n_cons, dual_step_size, weight,
+        reflection_coeff);
+}
+
 __global__ void halpern_update_kernel(const double *initial_primal,
                                       double *current_primal,
                                       const double *reflected_primal,

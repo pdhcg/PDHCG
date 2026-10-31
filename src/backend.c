@@ -44,6 +44,7 @@ const pdhcg_backend_t *pdhcg_backend(void)
         .postsolve = pdhcg_postsolve,
         .free_presolve = pdhcg_presolve_info_free,
         .allocate_host = safe_malloc,
+        .wall_time = monotonic_time_seconds,
         .termination_name = termination_reason_to_string,
         .cone_size = cone_length,
         .cone_block_size = cone_block_length,

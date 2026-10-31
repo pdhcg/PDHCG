@@ -24,7 +24,43 @@ def test_parameter_defaults_pass_core_validation() -> None:
     defaults = get_default_params()
 
     assert "eps_infeasible" in defaults
+    assert [defaults[key] for key in ("k_p", "k_i", "k_d", "i_smooth")] == pytest.approx(
+        [0.99, 0.01, 0.0, 0.3]
+    )
     validate_params(defaults)
+
+
+@pytest.mark.parametrize("alias, native, value", [
+    ("RestartKp", "k_p", -0.5),
+    ("RestartKi", "k_i", -0.1),
+    ("RestartKd", "k_d", -0.2),
+    ("RestartISmooth", "i_smooth", 1.0),
+])
+def test_weight_parameter_aliases(alias, native, value) -> None:
+    model = Model(objective_vector=np.zeros(1))
+    model.setParam(alias, value)
+    assert model.getParam(native) == pytest.approx(value)
+    model.setParam(native, 0.0)
+    assert model.getParam(alias) == 0.0
+
+
+@pytest.mark.parametrize("name", ["RestartKp", "RestartKi", "RestartKd"])
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf")])
+def test_weight_gains_reject_nonfinite_values(name, value) -> None:
+    model = Model(objective_vector=np.zeros(1))
+    before = model.getParam(name)
+    with pytest.raises(ValueError, match="restart PID coefficients must be finite"):
+        model.setParam(name, value)
+    assert model.getParam(name) == before
+
+
+@pytest.mark.parametrize("value", [-0.1, 1.1, float("nan"), float("inf"), -float("inf")])
+def test_weight_smoothing_validation(value) -> None:
+    model = Model(objective_vector=np.zeros(1))
+    before = model.getParam("RestartISmooth")
+    with pytest.raises(ValueError, match="restart i_smooth"):
+        model.setParam("RestartISmooth", value)
+    assert model.getParam("RestartISmooth") == before
 
 
 def test_set_param_rejects_unknown_name() -> None:

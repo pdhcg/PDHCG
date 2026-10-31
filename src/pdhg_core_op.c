@@ -620,7 +620,7 @@ static void linearized_quadratic_primal_update(pdhg_solver_state_t *state, doubl
     }
 }
 
-void pdhg_update(pdhg_solver_state_t *state)
+static void pdhg_update_impl(pdhg_solver_state_t *state, bool defer_dual_update)
 {
     double primal_step_size = state->step_size / state->primal_weight;
     if (state->quadratic_objective_term->nonconvexity < 0)
@@ -694,7 +694,7 @@ void pdhg_update(pdhg_solver_state_t *state)
     pdhcg_all_reduce_array(
         state->grid_context, state->primal_product, state->num_constraints, PDHCG_OP_SUM, PDHCG_SCOPE_ROW, 0);
 
-    if (state->num_constraints == 0)
+    if (state->num_constraints == 0 || defer_dual_update)
         return;
 
     bool store_pdhg_dual =
@@ -747,6 +747,42 @@ void pdhg_update(pdhg_solver_state_t *state)
                                                state->reflected_dual_solution,
                                                state->num_constraints,
                                                dual_step_size);
+}
+
+void pdhg_update(pdhg_solver_state_t *state)
+{
+    pdhg_update_impl(state, false);
+}
+
+void pdhg_update_and_halpern(pdhg_solver_state_t *state, double reflection_coefficient)
+{
+    /* Restart iterations need the fixed-point error before Halpern averaging. */
+    bool fuse = state->grid_context == NULL && state->num_constraints > 0 && !state->is_this_major_iteration &&
+        ((state->total_count + 2) % get_print_frequency(state->total_count + 2)) != 0 &&
+        !has_affine_cone_constraints(state);
+    pdhg_update_impl(state, fuse);
+    if (!fuse)
+    {
+        halpern_update(state, reflection_coefficient);
+        return;
+    }
+
+    double weight = (double)(state->inner_count + 1) / (state->inner_count + 2);
+    pdhcg_device_dual_and_halpern_update(state->initial_primal_solution,
+                                         state->current_primal_solution,
+                                         state->reflected_primal_solution,
+                                         state->initial_dual_solution,
+                                         state->current_dual_solution,
+                                         state->reflected_dual_solution,
+                                         state->primal_product,
+                                         state->affine_cone_offset,
+                                         state->constraint_lower_bound,
+                                         state->constraint_upper_bound,
+                                         state->num_variables,
+                                         state->num_constraints,
+                                         state->step_size * state->primal_weight,
+                                         weight,
+                                         reflection_coefficient);
 }
 
 void halpern_update(pdhg_solver_state_t *state, double reflection_coefficient)

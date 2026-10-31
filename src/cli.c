@@ -108,7 +108,7 @@ void save_solution(const double *data, int size, const char *output_dir, const c
     free(file_path);
 }
 
-void save_solver_summary(const pdhcg_result_t *result, const char *output_dir, const char *instance_name)
+void save_solver_summary(const pdhcg_result_t *result, const char *output_dir, const char *instance_name, double read_time_sec)
 {
     char *file_path = get_output_path(output_dir, instance_name, "_summary.txt");
     if (file_path == NULL)
@@ -125,6 +125,7 @@ void save_solver_summary(const pdhcg_result_t *result, const char *output_dir, c
     }
     fprintf(outfile, "Termination Reason: %s\n", termination_reason_to_string(result->termination_reason));
     fprintf(outfile, "Runtime (sec): %e\n", result->cumulative_time_sec);
+    fprintf(outfile, "Read Time (sec): %e\n", read_time_sec);
     fprintf(outfile, "Iterations Count: %d\n", result->total_count);
     if (result->total_inner_count > 0)
     {
@@ -197,6 +198,7 @@ void print_usage(const char *prog_name)
     fprintf(stderr,
             "      --sufficient_reduction_for_restart Sufficient reduction factor for restart (default: 0.2).\n");
     fprintf(stderr, "      --necessary_reduction_for_restart Necessary reduction factor for restart (default: 0.8).\n");
+    fprintf(stderr, "      --k_p <float>        Primal weight proportional gain (default: 0.99).\n");
     fprintf(stderr, "      --sv_max_iter <int>  Max iterations for singular value estimation (default: 5000).\n");
     fprintf(stderr, "      --sv_tol <float>     Tolerance for singular value estimation (default: 1e-4).\n");
     fprintf(stderr, "      --opt_norm <type>    Norm for optimality criteria: l2 or linf (default: linf).\n");
@@ -256,6 +258,7 @@ int run_pdhcg(int argc, char *argv[])
                                            {"non_diagonal_quadratic_mode", required_argument, 0, 1026},
                                            {"threads", required_argument, 0, 1027},
                                            {"device", required_argument, 0, 1028},
+                                           {"k_p", required_argument, 0, 1029},
                                            {0, 0, 0, 0}};
 
     int opt;
@@ -370,6 +373,9 @@ int run_pdhcg(int argc, char *argv[])
             case 1028:
                 params.device = optarg;
                 break;
+            case 1029:
+                params.restart_params.k_p = atof(optarg);
+                break;
             case 1026:
                 if (strcmp(optarg, "inner") == 0)
                     params.non_diagonal_quadratic_mode = NON_DIAGONAL_QUADRATIC_INNER;
@@ -407,7 +413,9 @@ int run_pdhcg(int argc, char *argv[])
     if (instance_name == NULL)
         return 1;
 
+    const double read_start = monotonic_time_seconds();
     qp_problem_t *problem = read_problem_file(filename);
+    const double read_time_sec = monotonic_time_seconds() - read_start;
     if (problem == NULL)
     {
         fprintf(stderr, "Failed to read or parse the file.\n");
@@ -424,7 +432,7 @@ int run_pdhcg(int argc, char *argv[])
     }
     else
     {
-        save_solver_summary(result, output_dir, instance_name);
+        save_solver_summary(result, output_dir, instance_name, read_time_sec);
         save_solution(
             result->primal_solution, problem->num_variables, output_dir, instance_name, "_primal_solution.txt");
         save_solution(result->dual_solution, problem->num_constraints, output_dir, instance_name, "_dual_solution.txt");
@@ -489,6 +497,7 @@ int run_d_pdhcg(int argc, char *argv[])
                                            {"non_diagonal_quadratic_mode", required_argument, 0, 1026},
                                            {"threads", required_argument, 0, 1027},
                                            {"device", required_argument, 0, 1028},
+                                           {"k_p", required_argument, 0, 1029},
                                            {"grid_size", required_argument, 0, 2001},
                                            {"partition_method", required_argument, 0, 2002},
                                            {"permute_method", required_argument, 0, 2003},
@@ -598,6 +607,9 @@ int run_d_pdhcg(int argc, char *argv[])
                 break;
             case 1028:
                 params.device = optarg;
+                break;
+            case 1029:
+                params.restart_params.k_p = atof(optarg);
                 break;
             case 1026:
                 if (strcmp(optarg, "inner") == 0)
@@ -729,12 +741,15 @@ int run_d_pdhcg(int argc, char *argv[])
     }
 
     qp_problem_t *problem = NULL;
+    double read_time_sec = 0.0;
 
     if (rank_global == 0)
     {
         if (params.verbose)
             printf("Rank 0: Loading problem file '%s'...\n", filename);
+        const double read_start = monotonic_time_seconds();
         problem = read_problem_file(filename);
+        read_time_sec = monotonic_time_seconds() - read_start;
 
         if (problem == NULL)
         {
@@ -756,7 +771,7 @@ int run_d_pdhcg(int argc, char *argv[])
         }
         else
         {
-            save_solver_summary(result, output_dir, instance_name);
+            save_solver_summary(result, output_dir, instance_name, read_time_sec);
             save_solution(
                 result->primal_solution, result->num_variables, output_dir, instance_name, "_primal_solution.txt");
             save_solution(

@@ -54,6 +54,9 @@ _PARAM_ALIAS = {
     "RestartSufficientReduction": "sufficient_reduction_for_restart",
     "RestartNecessaryReduction": "necessary_reduction_for_restart",
     "RestartKp": "k_p",
+    "RestartKi": "k_i",
+    "RestartKd": "k_d",
+    "RestartISmooth": "i_smooth",
     # reflection
     "ReflectionCoeff": "reflection_coefficient",
     "NonDiagonalQuadraticMode": "non_diagonal_quadratic_mode",

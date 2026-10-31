@@ -62,6 +62,9 @@ thread configuration are documented under [devices](../devices.md).
 | `RestartSufficientReduction` | `sufficient_reduction_for_restart` | float | 0.2 | Sufficient reduction threshold |
 | `RestartNecessaryReduction` | `necessary_reduction_for_restart` | float | 0.8 | Necessary reduction threshold |
 | `RestartKp` | `k_p` | float | 0.99 | Proportional coefficient for primal-weight updates |
+| `RestartKi` | `k_i` | float | 0.01 | Integral coefficient for primal-weight updates |
+| `RestartKd` | `k_d` | float | 0.0 | Derivative coefficient for primal-weight updates |
+| `RestartISmooth` | `i_smooth` | float | 0.3 | Integral smoothing factor in [0, 1] |
 
 ### Inner Solver
 

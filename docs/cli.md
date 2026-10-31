@@ -32,6 +32,8 @@ The executable's help lists all supported flags, accepted values, and defaults:
 ./build/pdhcg --help
 ```
 
+See [Solver Parameters](python/parameters.md) for parameter descriptions.
+
 See [Devices](devices.md) for backend selection, CPU threads, and multi-GPU
 execution; see [Algorithm](algorithm.md) for the solver's update and certificate
 conditions.

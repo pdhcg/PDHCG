@@ -147,18 +147,21 @@ pdhcg_result_t *optimize(const pdhg_parameters_t *input_params, const qp_problem
 
         state->is_this_major_iteration = ((state->total_count + 1) % params->termination_evaluation_frequency) == 0;
 
-        pdhg_update(state);
-
-        if (state->is_this_major_iteration || do_restart)
+        if (!state->is_this_major_iteration && !do_restart)
         {
+            pdhg_update_and_halpern(state, params->reflection_coefficient);
+        }
+        else
+        {
+            pdhg_update(state);
             compute_fixed_point_error(state);
             if (do_restart)
             {
                 state->initial_fixed_point_error = state->fixed_point_error;
                 do_restart = false;
             }
+            halpern_update(state, params->reflection_coefficient);
         }
-        halpern_update(state, params->reflection_coefficient);
 
         state->inner_count++;
         state->total_count++;
