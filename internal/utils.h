@@ -118,6 +118,22 @@ extern "C"
     double get_vector_inf_norm(pdhcg_device_blas_t handle, int n, const double *x_d);
 
     CsrComponent *deepcopy_csr_component(const CsrComponent *src, size_t num_rows, size_t nnz);
+
+    static inline bool quadratic_type_has_sparse_component(quad_obj_type_t type)
+    {
+        return type == PDHCG_SPARSE_Q || type == PDHCG_LOW_RANK_PLUS_SPARSE_Q;
+    }
+
+    static inline bool quadratic_type_has_lowrank_component(quad_obj_type_t type)
+    {
+        return type == PDHCG_LOW_RANK_Q || type == PDHCG_LOW_RANK_PLUS_SPARSE_Q;
+    }
+
+    static inline bool uses_linearized_non_diagonal_update(non_diagonal_quadratic_mode_t mode, quad_obj_type_t type)
+    {
+        return mode == NON_DIAGONAL_QUADRATIC_LINEARIZED && type != PDHCG_NON_Q && type != PDHCG_DIAG_Q;
+    }
+
     quad_obj_type_t detect_q_type(const CsrComponent *sparse_component,
                                   const CsrComponent *low_rank_component,
                                   int num_rows_sparse,

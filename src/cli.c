@@ -204,7 +204,7 @@ void print_usage(const char *prog_name)
     fprintf(stderr, "      --inner_init_tol     Initial tolerance for the inner solver (default: 1e-3).\n");
     fprintf(stderr, "      --inner_min_tol      Minimum tolerance for the inner solver (default: 1e-9).\n");
     fprintf(stderr,
-            "      --non_diagonal_quadratic_mode Non-diagonal Q update: 'inner' or 'linearized' (default: inner).\n");
+            "      --non_diagonal_quadratic_mode Non-diagonal Q update: 'inner' or 'linearized' (default: linearized).\n");
     fprintf(
         stderr,
         "      --no_diag_precond    Disable Jacobi diagonal preconditioner for inner subproblem (default: enabled).\n");

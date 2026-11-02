@@ -755,7 +755,7 @@ void pdhcg_device_rescale_problem(const pdhg_parameters_t *params,
 
     bool use_cone_preserving_scaling = params->use_cone_preserving_scaling;
     bool include_quadratic_objective =
-        uses_linearized_quadratic_update(params->non_diagonal_quadratic_mode, term->quad_obj_type);
+        uses_linearized_non_diagonal_update(params->non_diagonal_quadratic_mode, term->quad_obj_type);
     bool has_scaling = params->curtis_reid_iterations > 0 || params->l_inf_ruiz_iterations > 0 ||
         params->has_pock_chambolle_alpha || params->bound_objective_rescaling;
     if (params->curtis_reid_iterations > 0)

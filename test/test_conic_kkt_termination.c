@@ -255,13 +255,14 @@ static int recognizes_soc_with_only_zero_w_fixed_as_optimal(norm_type_t optimali
     return passed;
 }
 
-static int solves_fixed_rsoc_with_large_initial_step(norm_type_t optimality_norm)
+static int rejects_nonoptimal_fixed_rsoc_start_with_large_step(norm_type_t optimality_norm)
 {
     /*
      * Fixing s=t=1 reduces this rotated SOC to |x| <= sqrt(2).  The tiny
      * equality coefficient makes the initial primal step very large.  At the
      * feasible interior warm start x=0.5, an adaptive projected-gradient
      * mapping is small but the normal-cone KKT residual must remain nonzero.
+     * Evaluate that start without taking a step that could reach the optimum.
      */
     static const int row_ptr[] = {0, 1};
     static const int col_ind[] = {1};
@@ -304,10 +305,10 @@ static int solves_fixed_rsoc_with_large_initial_step(norm_type_t optimality_norm
     parameters.termination_evaluation_frequency = 1;
     parameters.termination_criteria.eps_optimal_relative = 1e-8;
     parameters.termination_criteria.eps_feasible_relative = 1e-8;
-    parameters.termination_criteria.iteration_limit = 1;
+    parameters.termination_criteria.iteration_limit = 0;
 
     pdhcg_result_t *result = solve_qp_problem(problem, &parameters);
-    int passed = result && result->termination_reason == TERMINATION_REASON_ITERATION_LIMIT && result->total_count == 1;
+    int passed = result && result->termination_reason == TERMINATION_REASON_ITERATION_LIMIT && result->total_count == 0;
     if (!passed && result)
     {
         fprintf(stderr,
@@ -326,7 +327,7 @@ static int solves_fixed_rsoc_with_large_initial_step(norm_type_t optimality_norm
     return passed;
 }
 
-static int solves_fixed_soc_with_large_initial_step(norm_type_t optimality_norm)
+static int rejects_nonoptimal_fixed_soc_start_with_large_step(norm_type_t optimality_norm)
 {
     /* Fix z=1; the free standard-SOC section is v^2 + w^2 <= 1. */
     static const int row_ptr[] = {0, 1};
@@ -370,10 +371,10 @@ static int solves_fixed_soc_with_large_initial_step(norm_type_t optimality_norm)
     parameters.termination_evaluation_frequency = 1;
     parameters.termination_criteria.eps_optimal_relative = 1e-8;
     parameters.termination_criteria.eps_feasible_relative = 1e-8;
-    parameters.termination_criteria.iteration_limit = 1;
+    parameters.termination_criteria.iteration_limit = 0;
 
     pdhcg_result_t *result = solve_qp_problem(problem, &parameters);
-    int passed = result && result->termination_reason == TERMINATION_REASON_ITERATION_LIMIT && result->total_count == 1;
+    int passed = result && result->termination_reason == TERMINATION_REASON_ITERATION_LIMIT && result->total_count == 0;
     if (!passed && result)
     {
         fprintf(stderr,
@@ -392,7 +393,7 @@ static int solves_fixed_soc_with_large_initial_step(norm_type_t optimality_norm)
     return passed;
 }
 
-static int solves_fixed_power_with_large_initial_step(norm_type_t optimality_norm)
+static int rejects_nonoptimal_fixed_power_start_with_large_step(norm_type_t optimality_norm)
 {
     /* With x=y=1 and alpha=0.5, the free section is simply |z| <= 1. */
     static const int row_ptr[] = {0, 1};
@@ -437,10 +438,10 @@ static int solves_fixed_power_with_large_initial_step(norm_type_t optimality_nor
     parameters.termination_evaluation_frequency = 1;
     parameters.termination_criteria.eps_optimal_relative = 1e-8;
     parameters.termination_criteria.eps_feasible_relative = 1e-8;
-    parameters.termination_criteria.iteration_limit = 1;
+    parameters.termination_criteria.iteration_limit = 0;
 
     pdhcg_result_t *result = solve_qp_problem(problem, &parameters);
-    int passed = result && result->termination_reason == TERMINATION_REASON_ITERATION_LIMIT && result->total_count == 1;
+    int passed = result && result->termination_reason == TERMINATION_REASON_ITERATION_LIMIT && result->total_count == 0;
     if (!passed && result)
     {
         fprintf(stderr,
@@ -459,7 +460,7 @@ static int solves_fixed_power_with_large_initial_step(norm_type_t optimality_nor
     return passed;
 }
 
-static int solves_fixed_exp_with_large_initial_step(norm_type_t optimality_norm)
+static int rejects_nonoptimal_fixed_exp_start_with_large_step(norm_type_t optimality_norm)
 {
     /* Fix y=1 and x=0; minimizing z over z >= exp(x) has solution z=1. */
     static const int row_ptr[] = {0, 1};
@@ -503,10 +504,10 @@ static int solves_fixed_exp_with_large_initial_step(norm_type_t optimality_norm)
     parameters.termination_evaluation_frequency = 1;
     parameters.termination_criteria.eps_optimal_relative = 1e-8;
     parameters.termination_criteria.eps_feasible_relative = 1e-8;
-    parameters.termination_criteria.iteration_limit = 1;
+    parameters.termination_criteria.iteration_limit = 0;
 
     pdhcg_result_t *result = solve_qp_problem(problem, &parameters);
-    int passed = result && result->termination_reason == TERMINATION_REASON_ITERATION_LIMIT && result->total_count == 1;
+    int passed = result && result->termination_reason == TERMINATION_REASON_ITERATION_LIMIT && result->total_count == 0;
     if (!passed && result)
     {
         fprintf(stderr,
@@ -605,10 +606,10 @@ int main(void)
         passed &= recognizes_soc_with_only_zero_w_fixed_as_optimal(norms[norm], 1);
         passed &= recognizes_soc_with_only_zero_w_fixed_as_optimal(norms[norm], 32);
         passed &= recognizes_soc_with_only_zero_w_fixed_as_optimal(norms[norm], 32768);
-        passed &= solves_fixed_rsoc_with_large_initial_step(norms[norm]);
-        passed &= solves_fixed_soc_with_large_initial_step(norms[norm]);
-        passed &= solves_fixed_power_with_large_initial_step(norms[norm]);
-        passed &= solves_fixed_exp_with_large_initial_step(norms[norm]);
+        passed &= rejects_nonoptimal_fixed_rsoc_start_with_large_step(norms[norm]);
+        passed &= rejects_nonoptimal_fixed_soc_start_with_large_step(norms[norm]);
+        passed &= rejects_nonoptimal_fixed_power_start_with_large_step(norms[norm]);
+        passed &= rejects_nonoptimal_fixed_exp_start_with_large_step(norms[norm]);
     }
     passed &= accepts_supported_and_rejects_empty_fixed_sections();
     passed &= preserves_fixed_values_when_clearing_warm_start();

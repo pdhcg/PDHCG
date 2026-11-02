@@ -20,6 +20,7 @@ limitations under the License.
 #include "cone_utils.h"
 #include "device_cones.h"
 #include "device_kernels.h"
+#include "device_linearized.h"
 #include "device_scaling.h"
 #include "distributed_conic.h"
 #include "internal_types.h"
@@ -72,11 +73,6 @@ static void initialize_sparse_component_obj(pdhg_solver_state_t *state, const pr
 static void initialize_lowrank_component_obj(pdhg_solver_state_t *state, processed_qp_problem_t *problem)
 {
     state->quadratic_objective_term->num_rank_lowrank_obj = problem->num_rank_lowrank_obj;
-    ALLOC_ZERO(state->quadratic_objective_term->Rx_product, (size_t)problem->num_rank_lowrank_obj * sizeof(double));
-
-    DEVICE_CHECK(pdhcg_device_vector_create(&state->quadratic_objective_term->vec_Rx_prod,
-                                            state->quadratic_objective_term->num_rank_lowrank_obj,
-                                            state->quadratic_objective_term->Rx_product));
 
     state->quadratic_objective_term->objective_lowrank_matrix =
         (device_sparse_matrix_csr_t *)safe_malloc(sizeof(device_sparse_matrix_csr_t));
@@ -212,44 +208,45 @@ static void initialize_quadratic_obj_term(pdhg_solver_state_t *state, processed_
     }
 }
 
+static inner_solver_mode_t select_inner_solver_mode(const pdhg_solver_state_t *state,
+                                                    const pdhg_parameters_t *params)
+{
+    quad_obj_type_t quad_type = state->quadratic_objective_term->quad_obj_type;
+    if (quad_type == PDHCG_NON_Q)
+        return INNER_SOLVER_DIRECT;
+    if (quad_type == PDHCG_DIAG_Q)
+        return state->cones.has_psd_cones ? INNER_SOLVER_LINEARIZED : INNER_SOLVER_DIRECT;
+    return uses_linearized_non_diagonal_update(params->non_diagonal_quadratic_mode, quad_type)
+        ? INNER_SOLVER_LINEARIZED : INNER_SOLVER_INNER_LOOP;
+}
+
 static void initialize_inner_solver(pdhg_solver_state_t *state, const pdhg_parameters_t *params)
 {
     state->inner_solver = (inner_solver_t *)safe_calloc(1, sizeof(inner_solver_t));
 
-    int iteration_limit = params->inner_solver_parameters.iteration_limit;
-    double initial_tol = params->inner_solver_parameters.initial_tolerance;
-    double min_tol = params->inner_solver_parameters.min_tolerance;
-
-    if (iteration_limit < 1)
+    state->inner_solver->mode = select_inner_solver_mode(state, params);
+    if (state->inner_solver->mode == INNER_SOLVER_LINEARIZED)
     {
-        fprintf(stderr, "Warning: inner_iter_limit (%d) < 1. Resetting to 1.\n", iteration_limit);
-        iteration_limit = 1;
+        state->inner_solver->linearized_context = pdhcg_device_linearized_create(state);
+        if (state->inner_solver->linearized_context)
+        {
+            ALLOC_ZERO(state->d_primal_step_size, sizeof(double));
+            ALLOC_ZERO(state->d_dual_step_size, sizeof(double));
+            ALLOC_ZERO(state->d_inner_count, sizeof(int));
+        }
+        return;
     }
-
-    if (initial_tol <= 0.0)
-    {
-        fprintf(stderr, "Warning: inner_init_tol (%.1e) <= 0. Resetting to default 1e-3.\n", initial_tol);
-        initial_tol = 1e-3;
-    }
-
-    if (min_tol <= 0.0)
-    {
-        fprintf(stderr, "Warning: inner_min_tol (%.1e) <= 0. Resetting to default 1e-9.\n", min_tol);
-        min_tol = 1e-9;
-    }
-
-    state->inner_solver->iteration_limit = iteration_limit;
-    state->inner_solver->tol = initial_tol;
-    state->inner_solver->min_tol = min_tol;
-
-    if (state->quadratic_objective_term->quad_obj_type == PDHCG_NON_Q || state->use_linearized_quadratic_update ||
-        (state->quadratic_objective_term->quad_obj_type == PDHCG_DIAG_Q && !state->cones.has_psd_cones))
+    if (state->inner_solver->mode == INNER_SOLVER_DIRECT)
         return;
 
-    /* A nonuniform diagonal metric has no one-EVD PSD prox, so diagonal-Q
-       models with PSD variables use the existing projected BB solve. */
+    state->inner_solver->iteration_limit = params->inner_solver_parameters.iteration_limit;
+    state->inner_solver->tol = params->inner_solver_parameters.initial_tolerance;
+    state->inner_solver->min_tol = params->inner_solver_parameters.min_tolerance;
+
+    if (state->has_variable_cones)
+        DEVICE_CHECK(pdhcg_device_allocate((void **)&state->cones.bb_primal_snapshot,
+                                           (size_t)state->num_variables * sizeof(double)));
     ALLOC_ZERO(state->inner_solver->primal_buffer, state->num_variables * sizeof(double));
-    ALLOC_ZERO(state->inner_solver->dual_buffer, state->num_constraints * sizeof(double));
     state->inner_solver->bb_step_size = (bb_step_size_t *)safe_calloc(1, sizeof(bb_step_size_t));
     ALLOC_ZERO(state->inner_solver->bb_step_size->gradient, state->num_variables * sizeof(double));
     ALLOC_ZERO(state->inner_solver->bb_step_size->direction, state->num_variables * sizeof(double));
@@ -332,8 +329,11 @@ void initialize_quadratic_term_information(pdhg_solver_state_t *state, const pdh
             max_eigen = fmax(max_eigen, fabs(item));
             min_eigen = fmin(min_eigen, item);
         }
+        double negative_min_eigen = -min_eigen;
+        pdhcg_all_reduce_scalar(state->grid_context, &max_eigen, PDHCG_OP_MAX, PDHCG_SCOPE_ROW, false);
+        pdhcg_all_reduce_scalar(state->grid_context, &negative_min_eigen, PDHCG_OP_MAX, PDHCG_SCOPE_ROW, false);
         quadratic_objective->norm = max_eigen;
-        quadratic_objective->nonconvexity = state->num_variables > 0 ? min_eigen : 0.0;
+        quadratic_objective->nonconvexity = negative_min_eigen == -INFINITY ? 0.0 : -negative_min_eigen;
         free(temp_diag_host);
         return;
     }
@@ -518,8 +518,6 @@ static void initialize_cone_runtime(pdhg_solver_state_t *state, const qp_problem
         size_t variable_bytes = (size_t)state->num_variables * sizeof(double);
         if (qt != PDHCG_NON_Q)
             DEVICE_CHECK(pdhcg_device_allocate((void **)&state->cones.effective_objective_gradient, variable_bytes));
-        if (qt != PDHCG_NON_Q && (qt != PDHCG_DIAG_Q || state->cones.has_psd_cones))
-            DEVICE_CHECK(pdhcg_device_allocate((void **)&state->cones.bb_primal_snapshot, variable_bytes));
     }
 
     bool has_affine_cones = working_problem->affine_cones.num_cones > 0 || state->affine_cones.split != NULL ||
@@ -640,16 +638,27 @@ pdhg_solver_state_t *initialize_solver_state(const pdhg_parameters_t *params,
     DEVICE_CHECK(pdhcg_device_synchronize());
     state->rescaling_time_sec = monotonic_time_seconds() - start_rescaling;
 
-    ALLOC_ZERO(state->current_primal_solution, var_bytes);
+    /* Store [x; y] contiguously for the combined linearized SpMV. */
+    ALLOC_ZERO(state->current_primal_solution, var_bytes + con_bytes);
+    state->current_dual_solution = state->current_primal_solution + n_vars;
     ALLOC_ZERO(state->pdhg_primal_solution, var_bytes);
     ALLOC_ZERO(state->reflected_primal_solution, var_bytes);
-    ALLOC_ZERO(state->dual_product, var_bytes);
+    int rank = quadratic_type_has_lowrank_component(state->quadratic_objective_term->quad_obj_type)
+        ? state->quadratic_objective_term->num_rank_lowrank_obj : 0;
+    /* Share storage with the combined SpMV, keeping Rx 16-byte aligned for cuSPARSE 12.4. */
+    size_t rx_offset = (size_t)n_vars + (rank > 0 ? n_vars % 2 : 0);
+    ALLOC_ZERO(state->dual_product, (rx_offset + (size_t)rank) * sizeof(double));
+    if (quadratic_type_has_lowrank_component(state->quadratic_objective_term->quad_obj_type))
+    {
+        state->quadratic_objective_term->Rx_product = state->dual_product + rx_offset;
+        DEVICE_CHECK(pdhcg_device_vector_create(&state->quadratic_objective_term->vec_Rx_prod,
+                                                rank, state->quadratic_objective_term->Rx_product));
+    }
     ALLOC_ZERO(state->dual_slack, var_bytes);
     ALLOC_ZERO(state->infeasibility_dual_workspace, var_bytes);
     ALLOC_ZERO(state->dual_residual, var_bytes);
     ALLOC_ZERO(state->delta_primal_solution, var_bytes);
 
-    ALLOC_ZERO(state->current_dual_solution, con_bytes);
     ALLOC_ZERO(state->pdhg_dual_solution, con_bytes);
     ALLOC_ZERO(state->reflected_dual_solution, con_bytes);
     ALLOC_ZERO(state->primal_product, con_bytes);
@@ -832,8 +841,6 @@ pdhg_solver_state_t *initialize_solver_state(const pdhg_parameters_t *params,
     DEVICE_CHECK(pdhcg_device_copy(
         state->reflected_primal_solution, state->initial_primal_solution, var_bytes, PDHCG_COPY_DEVICE_TO_DEVICE));
 
-    state->use_linearized_quadratic_update = uses_linearized_quadratic_update(
-        params->non_diagonal_quadratic_mode, state->quadratic_objective_term->quad_obj_type);
     initialize_quadratic_term_information(state, params);
     initialize_inner_solver(state, params);
 
@@ -902,6 +909,16 @@ void pdhg_solver_state_free(pdhg_solver_state_t *state)
         return;
     }
 
+    if (state->inner_solver)
+        pdhcg_device_linearized_destroy(state->inner_solver->linearized_context);
+
+    if (state->d_primal_step_size)
+        DEVICE_CHECK(pdhcg_device_free(state->d_primal_step_size));
+    if (state->d_dual_step_size)
+        DEVICE_CHECK(pdhcg_device_free(state->d_dual_step_size));
+    if (state->d_inner_count)
+        DEVICE_CHECK(pdhcg_device_free(state->d_inner_count));
+
     if (state->variable_lower_bound)
         DEVICE_CHECK(pdhcg_device_free(state->variable_lower_bound));
     if (state->variable_upper_bound)
@@ -934,8 +951,6 @@ void pdhg_solver_state_free(pdhg_solver_state_t *state)
         DEVICE_CHECK(pdhcg_device_free(state->dual_product));
     if (state->initial_dual_solution)
         DEVICE_CHECK(pdhcg_device_free(state->initial_dual_solution));
-    if (state->current_dual_solution)
-        DEVICE_CHECK(pdhcg_device_free(state->current_dual_solution));
     if (state->pdhg_dual_solution)
         DEVICE_CHECK(pdhcg_device_free(state->pdhg_dual_solution));
     if (state->reflected_dual_solution)
@@ -998,9 +1013,6 @@ void pdhg_solver_state_free(pdhg_solver_state_t *state)
         free_device_csr(state->quadratic_objective_term->objective_lowrank_matrix_t);
         if (state->quadratic_objective_term->diagonal_objective_matrix)
             DEVICE_CHECK(pdhcg_device_free(state->quadratic_objective_term->diagonal_objective_matrix));
-        if (state->quadratic_objective_term->Rx_product)
-            DEVICE_CHECK(pdhcg_device_free(state->quadratic_objective_term->Rx_product));
-
         if (state->quadratic_objective_term->d_middle_diag)
             DEVICE_CHECK(pdhcg_device_free(state->quadratic_objective_term->d_middle_diag));
         if (state->quadratic_objective_term->d_middle_dense)
@@ -1056,8 +1068,6 @@ void pdhg_solver_state_free(pdhg_solver_state_t *state)
         }
         if (state->inner_solver->primal_buffer)
             DEVICE_CHECK(pdhcg_device_free(state->inner_solver->primal_buffer));
-        if (state->inner_solver->dual_buffer)
-            DEVICE_CHECK(pdhcg_device_free(state->inner_solver->dual_buffer));
         free(state->inner_solver);
     }
 

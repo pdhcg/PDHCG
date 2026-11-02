@@ -299,66 +299,47 @@ static pdhcg_result_t *distributed_optimize_core(const pdhg_parameters_t *params
     MPI_Barrier(grid_context->comm_global);
 
     double start_time = MPI_Wtime();
-    bool do_restart = false;
 
-    while (state->total_count < params->termination_criteria.iteration_limit)
+    while (true)
     {
-        if ((state->is_this_major_iteration || state->total_count == 0) ||
-            (state->total_count % get_print_frequency(state->total_count) == 0))
+        /* Conic residuals reuse the delta vectors, so consume the fixed-point
+           directions before evaluating ordinary optimality residuals. */
+        if (state->total_count > 0)
         {
-            /* Conic residuals reuse the delta vectors, so consume the fixed-point
-               directions before evaluating ordinary optimality residuals. */
-            if (state->is_this_major_iteration)
-            {
-                compute_infeasibility_information(state);
-            }
-            compute_residual(state, params->optimality_norm);
+            compute_infeasibility_information(state);
+        }
+        compute_residual(state, params->optimality_norm);
 
-            state->cumulative_time_sec = (double)(MPI_Wtime() - start_time);
+        state->cumulative_time_sec = (double)(MPI_Wtime() - start_time);
 
-            check_termination_criteria(state, &params->termination_criteria);
-            display_iteration_stats(state, params->verbose);
-
-            if (state->termination_reason != TERMINATION_REASON_UNSPECIFIED)
-            {
-                break;
-            }
+        check_termination_criteria(state, &params->termination_criteria);
+        display_iteration_stats(state, params->verbose);
+        if (state->termination_reason != TERMINATION_REASON_UNSPECIFIED)
+        {
+            break;
         }
 
-        if ((state->is_this_major_iteration || state->total_count == 0))
-        {
-            do_restart =
-                should_do_adaptive_restart(state, &params->restart_params, params->termination_evaluation_frequency);
-            if (do_restart)
-                perform_restart(state, params);
-        }
+        bool do_restart =
+            should_do_adaptive_restart(state, &params->restart_params, params->termination_evaluation_frequency);
+        int iterations = params->termination_criteria.iteration_limit - state->total_count;
+        if (iterations > params->termination_evaluation_frequency)
+            iterations = params->termination_evaluation_frequency;
+        if (do_restart)
+            perform_restart(state, params);
 
-        state->is_this_major_iteration = ((state->total_count + 1) % params->termination_evaluation_frequency) == 0;
-
-        pdhg_update(state);
-
-        if (state->is_this_major_iteration || do_restart)
+        pdhg_iterations(state, params, 1);
+        --iterations;
+        if (do_restart || iterations == 0)
         {
             compute_fixed_point_error(state);
             if (do_restart)
-            {
                 state->initial_fixed_point_error = state->fixed_point_error;
-                do_restart = false;
-            }
         }
-
-        halpern_update(state, params->reflection_coefficient);
-
-        state->inner_count++;
-        state->total_count++;
-    }
-
-    if (state->termination_reason == TERMINATION_REASON_UNSPECIFIED)
-    {
-        state->termination_reason = TERMINATION_REASON_ITERATION_LIMIT;
-        compute_residual(state, params->optimality_norm);
-        if (grid_context->rank_global == 0)
-            display_iteration_stats(state, params->verbose);
+        if (iterations > 0)
+        {
+            pdhg_iterations(state, params, iterations);
+            compute_fixed_point_error(state);
+        }
     }
 
     pdhcg_result_t *result = create_result_from_state_distributed(state, working_problem);
