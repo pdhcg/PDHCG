@@ -158,6 +158,7 @@ static int check_diagonal_q_psd(void)
         problem && detect_q_type(problem->objective_sparse_matrix, NULL, problem->num_variables, 0) == PDHCG_DIAG_Q;
     pdhcg_result_t *result = problem ? solve_tiny(problem) : NULL;
     int passed = uses_diagonal_q && result && result->termination_reason == TERMINATION_REASON_OPTIMAL &&
+        result->total_inner_count == 0 &&
         close_enough(result->primal_solution[2], 4.0, 5e-4) && result->relative_primal_residual < 3e-6 &&
         result->relative_dual_residual < 3e-6;
     if (!passed && result)

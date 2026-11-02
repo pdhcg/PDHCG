@@ -52,7 +52,7 @@ thread configuration are documented under [devices](../devices.md).
 | `BoundObjRescaling` | `bound_objective_rescaling` | bool | True | Rescale bounds and objective |
 | `UseConePreservingScaling` | `use_cone_preserving_scaling` | bool | True | Use one scaling value per cone block |
 | `ReflectionCoeff` | `reflection_coefficient` | float | 1.0 | Reflection coefficient |
-| `NonDiagonalQuadraticMode` | `non_diagonal_quadratic_mode` | str | "inner" | Non-diagonal Q update: "inner" or "linearized" |
+| `NonDiagonalQuadraticMode` | `non_diagonal_quadratic_mode` | str | "linearized" | Non-diagonal Q update: "inner" or "linearized" |
 
 ### Restarts
 

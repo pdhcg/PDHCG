@@ -48,8 +48,8 @@ typedef enum {
 
 `NON_DIAGONAL_QUADRATIC_LINEARIZED` replaces the non-diagonal quadratic
 proximal inner solve with one gradient evaluation and one box/cone projection.
-Diagonal Q is unaffected and retains its dedicated update. The default remains
-`NON_DIAGONAL_QUADRATIC_INNER`.
+This parameter only affects non-diagonal Q; diagonal Q uses automatic mode
+selection. The default is `NON_DIAGONAL_QUADRATIC_LINEARIZED`.
 
 ## Matrix Format
 

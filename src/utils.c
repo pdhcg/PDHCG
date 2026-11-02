@@ -417,7 +417,7 @@ void set_default_parameters(pdhg_parameters_t *params)
     params->termination_evaluation_frequency = 200;
     params->feasibility_polishing = false;
     params->reflection_coefficient = 1.0;
-    params->non_diagonal_quadratic_mode = NON_DIAGONAL_QUADRATIC_INNER;
+    params->non_diagonal_quadratic_mode = NON_DIAGONAL_QUADRATIC_LINEARIZED;
     params->presolve = false;
 
     params->sv_max_iter = 5000;

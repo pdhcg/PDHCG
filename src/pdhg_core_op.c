@@ -19,6 +19,7 @@ limitations under the License.
 #include "cone_kernel_ops.h"
 #include "device_cones.h"
 #include "device_kernels.h"
+#include "device_linearized.h"
 #include "distributed_conic.h"
 #include "distributed_interface.h"
 #include "internal_types.h"
@@ -348,8 +349,7 @@ double compute_xQx(pdhg_solver_state_t *state, double *primal_sol, double *prima
 void lp_primal_update(pdhg_solver_state_t *state, double step_size)
 {
     bool force_major_for_cone = state->has_variable_cones;
-    if (state->is_this_major_iteration || force_major_for_cone ||
-        ((state->total_count + 2) % get_print_frequency(state->total_count + 2)) == 0)
+    if (state->is_this_major_iteration || force_major_for_cone)
     {
         pdhcg_device_compute_lp_next_pdhg_primal_solution_major(state->current_primal_solution,
                                                                 state->pdhg_primal_solution,
@@ -378,8 +378,7 @@ void lp_primal_update(pdhg_solver_state_t *state, double step_size)
 void diag_q_primal_update(pdhg_solver_state_t *state, double step_size)
 {
     bool force_major_for_cone = state->has_variable_cones;
-    if (state->is_this_major_iteration ||
-        ((state->total_count + 2) % get_print_frequency(state->total_count + 2)) == 0 || force_major_for_cone)
+    if (state->is_this_major_iteration || force_major_for_cone)
     {
         pdhcg_device_compute_diagonal_q_next_pdhg_primal_solution_major(
             state->current_primal_solution,
@@ -585,8 +584,7 @@ static void linearized_quadratic_primal_update(pdhg_solver_state_t *state, doubl
     double linearization_norm = safeguarded_spectral_estimate(state->quadratic_objective_term->norm);
     double alpha = 1.0 / (linearization_norm + inv_step_size);
     update_obj_product(state, state->current_primal_solution);
-    bool store_candidate = state->is_this_major_iteration || state->has_variable_cones ||
-        ((state->total_count + 2) % get_print_frequency(state->total_count + 2)) == 0;
+    bool store_candidate = state->is_this_major_iteration || state->has_variable_cones;
     if (store_candidate)
     {
         pdhcg_device_primal_gradient_descent_kernel_major(state->dual_product,
@@ -640,15 +638,17 @@ void pdhg_update(pdhg_solver_state_t *state)
     pdhcg_all_reduce_array(
         state->grid_context, state->dual_product, state->num_variables, PDHCG_OP_SUM, PDHCG_SCOPE_COL, 0);
 
-    if (state->use_linearized_quadratic_update)
+    switch (state->inner_solver->mode)
     {
-        linearized_quadratic_primal_update(state, primal_step_size);
-    }
-    else
-    {
-        switch (state->quadratic_objective_term->quad_obj_type)
+        case INNER_SOLVER_LINEARIZED:
+            linearized_quadratic_primal_update(state, primal_step_size);
+            break;
+        case INNER_SOLVER_INNER_LOOP:
+            primal_BB_step_size_update(state, primal_step_size);
+            break;
+        case INNER_SOLVER_DIRECT:
         {
-            case PDHCG_NON_Q:
+            if (state->quadratic_objective_term->quad_obj_type == PDHCG_NON_Q)
             {
                 lp_primal_update(state, primal_step_size);
                 if (state->has_variable_cones)
@@ -657,31 +657,18 @@ void pdhg_update(pdhg_solver_state_t *state)
                         state, &state->cones, state->pdhg_primal_solution, state->cones.projection_workspace);
                     recompute_cone_reflection(state);
                 }
-                break;
             }
-            case PDHCG_DIAG_Q:
+            else
             {
-                if (state->cones.has_psd_cones)
-                    primal_BB_step_size_update(state, primal_step_size);
-                else
-                {
-                    diag_q_primal_update(state, primal_step_size);
-                    if (state->has_variable_cones)
-                        project_cone_runtime_diag_q(state, &state->cones, primal_step_size);
-                }
-                break;
+                diag_q_primal_update(state, primal_step_size);
+                if (state->has_variable_cones)
+                    project_cone_runtime_diag_q(state, &state->cones, primal_step_size);
             }
-            case PDHCG_SPARSE_Q:
-            case PDHCG_LOW_RANK_Q:
-            case PDHCG_LOW_RANK_PLUS_SPARSE_Q:
-            {
-                primal_BB_step_size_update(state, primal_step_size);
-                break;
-            }
-            default:
-                fprintf(stderr, "Error: Unknown Quadratic Objective Type detected.\n");
-                exit(EXIT_FAILURE);
+            break;
         }
+        default:
+            fprintf(stderr, "Error: Unknown primal subproblem solver mode.\n");
+            exit(EXIT_FAILURE);
     }
 
     pdhcg_spmv_execute(state->sparse_handle,
@@ -697,8 +684,7 @@ void pdhg_update(pdhg_solver_state_t *state)
     if (state->num_constraints == 0)
         return;
 
-    bool store_pdhg_dual =
-        state->is_this_major_iteration || ((state->total_count + 2) % get_print_frequency(state->total_count + 2)) == 0;
+    bool store_pdhg_dual = state->is_this_major_iteration;
     bool has_local_affine_cones = state->affine_cones.num_blocks > 0 || state->affine_cones.split;
     if (!has_local_affine_cones)
     {
@@ -751,7 +737,8 @@ void pdhg_update(pdhg_solver_state_t *state)
 
 void halpern_update(pdhg_solver_state_t *state, double reflection_coefficient)
 {
-    double weight = (double)(state->inner_count + 1) / (state->inner_count + 2);
+    double inner_count = state->inner_count;
+    double weight = (inner_count + 1.0) / (inner_count + 2.0);
     pdhcg_device_halpern_update(state->initial_primal_solution,
                                 state->current_primal_solution,
                                 state->reflected_primal_solution,
@@ -762,6 +749,37 @@ void halpern_update(pdhg_solver_state_t *state, double reflection_coefficient)
                                 state->num_constraints,
                                 weight,
                                 reflection_coefficient);
+}
+
+static void pdhg_step(pdhg_solver_state_t *state,
+                      const pdhg_parameters_t *params,
+                      bool major)
+{
+    state->is_this_major_iteration = major;
+    pdhg_update(state);
+    halpern_update(state, params->reflection_coefficient);
+    ++state->inner_count;
+    ++state->total_count;
+}
+
+void pdhg_iterations(pdhg_solver_state_t *state,
+                     const pdhg_parameters_t *params,
+                     int iterations)
+{
+    if (iterations <= 0)
+        return;
+
+    if (state->inner_solver->linearized_context)
+    {
+        pdhcg_device_linearized_execute(state, params, iterations);
+        state->inner_count += iterations;
+        state->total_count += iterations;
+        state->is_this_major_iteration = true;
+        return;
+    }
+
+    for (int i = 0; i < iterations; ++i)
+        pdhg_step(state, params, i == iterations - 1);
 }
 
 void rescale_solution(pdhg_solver_state_t *state)
@@ -848,6 +866,7 @@ void perform_restart(pdhg_solver_state_t *state, const pdhg_parameters_t *params
 
     state->inner_count = 0;
     state->last_trial_fixed_point_error = INFINITY;
+    sync_step_sizes_to_device(state);
 }
 
 void initialize_step_size_and_primal_weight(pdhg_solver_state_t *state, const pdhg_parameters_t *params)
@@ -888,18 +907,37 @@ void initialize_step_size_and_primal_weight(pdhg_solver_state_t *state, const pd
         state->primal_weight = (state->objective_vector_norm + 1.0) / (state->constraint_bound_norm + 1.0);
     }
     state->best_primal_weight = state->primal_weight;
+    sync_step_sizes_to_device(state);
+}
+
+void sync_step_sizes_to_device(pdhg_solver_state_t *state)
+{
+    if (!state->d_primal_step_size)
+        return;
+
+    double primal_step = 1.0 / (safeguarded_spectral_estimate(state->quadratic_objective_term->norm) +
+                                state->primal_weight / state->step_size);
+    double dual_step = state->step_size * state->primal_weight;
+    DEVICE_CHECK(pdhcg_device_copy(
+        state->d_primal_step_size, &primal_step, sizeof(double), PDHCG_COPY_HOST_TO_DEVICE));
+    DEVICE_CHECK(pdhcg_device_copy(
+        state->d_dual_step_size, &dual_step, sizeof(double), PDHCG_COPY_HOST_TO_DEVICE));
 }
 
 void compute_fixed_point_error(pdhg_solver_state_t *state)
 {
-    pdhcg_device_compute_delta_solution(state->current_primal_solution,
+    /* reflected - old_current = 2 * (reflected - candidate), also after Halpern. */
+    pdhcg_device_compute_delta_solution(state->pdhg_primal_solution,
                                         state->reflected_primal_solution,
                                         state->delta_primal_solution,
-                                        state->current_dual_solution,
+                                        state->pdhg_dual_solution,
                                         state->reflected_dual_solution,
                                         state->delta_dual_solution,
                                         state->num_variables,
                                         state->num_constraints);
+    const double two = 2.0;
+    DEVICE_CHECK(pdhcg_device_scal(state->blas_handle, state->num_variables, &two, state->delta_primal_solution, 1));
+    DEVICE_CHECK(pdhcg_device_scal(state->blas_handle, state->num_constraints, &two, state->delta_dual_solution, 1));
 
     pdhcg_spmv_execute(state->sparse_handle,
                        state->spmv_ctx_At,
@@ -932,7 +970,7 @@ void compute_fixed_point_error(pdhg_solver_state_t *state)
 
     movement = primal_norm_sq * state->primal_weight + dual_norm_sq / state->primal_weight;
 
-    if (state->use_linearized_quadratic_update)
+    if (state->inner_solver->mode == INNER_SOLVER_LINEARIZED)
     {
         /* The fixed-point metric gains eta * <dx, (L I - H) dx>. */
         update_obj_product(state, state->delta_primal_solution);
@@ -955,7 +993,7 @@ void compute_fixed_point_error(pdhg_solver_state_t *state)
     interaction = 2 * state->step_size * cross_term;
 
     state->fixed_point_error = sqrt(fmax(0.0, movement + interaction));
-    if (state->problem_type == CONVEX_QP && state->inner_solver->bb_step_size)
+    if (state->problem_type == CONVEX_QP && state->inner_solver->mode == INNER_SOLVER_INNER_LOOP)
     {
         state->inner_solver->tol =
             fmin(state->inner_solver->tol,

@@ -20,13 +20,6 @@ limitations under the License.
 #include <cuda_runtime.h>
 #include <stdlib.h>
 
-// #define FUSE_ELEMENT_OP 0
-// #ifdef PDHCG_USE_SPMVOP
-// #ifndef PDHCG_DISTRIBUTED
-// #define FUSE_ELEMENT_OP 1
-// #endif
-// #endif
-
 struct pdhcg_spmv_ctx
 {
     cusparseSpMatDescr_t mat;
@@ -210,18 +203,14 @@ extern "C" void pdhcg_spmv_execute(pdhcg_device_sparse_t device_handle,
                                    double *y)
 {
     auto sparse_handle = reinterpret_cast<cusparseHandle_t>(device_handle);
-    (void)alpha;
-    (void)x;
     if (ctx->num_nonzeros == 0)
     {
         double beta_host = (beta != NULL) ? *beta : 0.0;
-        if (beta_host == 0.0)
+        if (beta_host != 1.0 && ctx->num_rows > 0)
         {
-            CUDA_CHECK(cudaMemset(y, 0, (size_t)ctx->num_rows * sizeof(double)));
-        }
-        else if (beta_host != 1.0)
-        {
-            CUDA_CHECK(cudaMemset(y, 0, (size_t)ctx->num_rows * sizeof(double)));
+            cudaStream_t stream = NULL;
+            CUSPARSE_CHECK(cusparseGetStream(sparse_handle, &stream));
+            CUDA_CHECK(cudaMemsetAsync(y, 0, (size_t)ctx->num_rows * sizeof(double), stream));
         }
         return;
     }

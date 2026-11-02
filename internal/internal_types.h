@@ -51,7 +51,7 @@ typedef struct
     pdhcg_spmv_ctx_t *spmv_ctx_R;
     pdhcg_spmv_ctx_t *spmv_ctx_Rt;
 
-    double *Rx_product;
+    double *Rx_product; /* Tail view of the state's dual_product allocation. */
 
     pdhcg_device_vector_t vec_Rx_prod;
     int num_rank_lowrank_obj;
@@ -64,21 +64,6 @@ typedef struct
     double *global_primal_obj_product;
     pdhcg_device_vector_t vec_global_primal_obj_prod;
 } quadratic_objective_term_t;
-
-static inline bool quadratic_type_has_sparse_component(quad_obj_type_t type)
-{
-    return type == PDHCG_SPARSE_Q || type == PDHCG_LOW_RANK_PLUS_SPARSE_Q;
-}
-
-static inline bool quadratic_type_has_lowrank_component(quad_obj_type_t type)
-{
-    return type == PDHCG_LOW_RANK_Q || type == PDHCG_LOW_RANK_PLUS_SPARSE_Q;
-}
-
-static inline bool uses_linearized_quadratic_update(non_diagonal_quadratic_mode_t mode, quad_obj_type_t type)
-{
-    return mode == NON_DIAGONAL_QUADRATIC_LINEARIZED && type != PDHCG_NON_Q && type != PDHCG_DIAG_Q;
-}
 
 typedef struct
 {
@@ -94,11 +79,30 @@ typedef struct
     double tol_scale;
 } bb_step_size_t;
 
+typedef enum
+{
+    INNER_SOLVER_DIRECT = 0,
+    INNER_SOLVER_INNER_LOOP,
+    INNER_SOLVER_LINEARIZED
+} inner_solver_mode_t;
+
 typedef struct
 {
+    device_sparse_matrix_csr_t primal_matrix;
+    pdhcg_spmv_ctx_t *spmv_ctx;
+    pdhcg_device_vector_t vec_primal_dual_solution;
+    pdhcg_device_vector_t vec_product;
+    void *stream;
+    void *ready;
+    void *graph;
+} linearized_context_t;
+
+typedef struct
+{
+    inner_solver_mode_t mode;
     bb_step_size_t *bb_step_size;
+    linearized_context_t *linearized_context;
     double *primal_buffer;
-    double *dual_buffer;
     double tol;
     double min_tol;
     int iteration_limit;
@@ -175,11 +179,13 @@ typedef struct
     double *reflected_primal_solution;
     double *dual_product;
     double *initial_dual_solution;
-    double *current_dual_solution;
+    double *current_dual_solution; /* Tail view of the current_primal_solution allocation. */
     double *pdhg_dual_solution;
     double *reflected_dual_solution;
     double *primal_product;
     double step_size;
+    double *d_primal_step_size;
+    double *d_dual_step_size;
     double primal_weight;
     int total_count;
     bool is_this_major_iteration;
@@ -220,6 +226,7 @@ typedef struct
     double initial_fixed_point_error;
     double last_trial_fixed_point_error;
     int inner_count;
+    int *d_inner_count;
 
     pdhcg_device_sparse_t sparse_handle;
     pdhcg_device_blas_t blas_handle;
@@ -238,7 +245,6 @@ typedef struct
     int feasibility_iteration;
 
     problem_type_t problem_type;
-    bool use_linearized_quadratic_update;
     inner_solver_t *inner_solver;
     grid_context_t *grid_context;
 

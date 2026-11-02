@@ -1121,7 +1121,7 @@ void pdhcg_device_rescale_problem(const pdhg_parameters_t *params,
     scaling_workspace_t workspace = {};
     workspace.preserve_cones = params->use_cone_preserving_scaling;
     workspace.include_quadratic = (params->l_inf_ruiz_iterations > 0 || params->has_pock_chambolle_alpha) &&
-        uses_linearized_quadratic_update(params->non_diagonal_quadratic_mode, term->quad_obj_type);
+        uses_linearized_non_diagonal_update(params->non_diagonal_quadratic_mode, term->quad_obj_type);
     if (equilibrating)
     {
         DEVICE_CHECK(pdhcg_device_allocate((void **)&workspace.row_scale, row_bytes));

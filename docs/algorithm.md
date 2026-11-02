@@ -144,11 +144,11 @@ On variable-cone blocks, use the corresponding diagonal-metric cone projection
 $\Pi_{\mathcal K_v}^{M_J}(r_J^k)$. The metric is essential for coupled cone
 coordinates; Appendix C of the paper gives the weighted projection formulas.
 The implementation uses these specialized projections where supported;
-PSD variable blocks currently use the inner solver.
+models with diagonal $Q$ and PSD variable blocks use the linearized update below.
 
 #### Inner iterations
 
-For a general sparse or low-rank $H$, the default `inner` mode approximates the
+For a general sparse or low-rank $H$, the `inner` mode approximates the
 same proximal point using projected iterations. Starting from $u^0=x^k$, a
 basic inner step is
 
@@ -168,7 +168,7 @@ for accuracy and iteration controls.
 
 #### Linearized update
 
-The `linearized` mode changes the proximal metric. Choose a curvature bound
+The default `linearized` mode changes the proximal metric. Choose a curvature bound
 $L\geq\lambda_{\max}(H)$ and add the term
 
 $$

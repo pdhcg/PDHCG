@@ -32,6 +32,9 @@ extern "C"
     double compute_xQx(pdhg_solver_state_t *state, double *primal_sol, double *primal_obj_product);
     void pdhg_update(pdhg_solver_state_t *state);
     void halpern_update(pdhg_solver_state_t *state, double reflection_coefficient);
+    void pdhg_iterations(pdhg_solver_state_t *state,
+                         const pdhg_parameters_t *params,
+                         int iterations);
 
     void rescale_solution(pdhg_solver_state_t *state);
 
@@ -40,6 +43,8 @@ extern "C"
     void perform_restart(pdhg_solver_state_t *state, const pdhg_parameters_t *params);
 
     void initialize_step_size_and_primal_weight(pdhg_solver_state_t *state, const pdhg_parameters_t *params);
+    
+    void sync_step_sizes_to_device(pdhg_solver_state_t *state);
 
     void compute_fixed_point_error(pdhg_solver_state_t *state);
 
