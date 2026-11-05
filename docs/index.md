@@ -33,7 +33,8 @@ pip install pdhcg
 <figure class="hero-geometry hero-demo" data-home-demo>
   <a class="hero-demo-link" href="demo/" aria-label="Explore primal and dual updates and compare convergence in the interactive demo">
     <div class="hero-demo-stage">
-      <img class="hero-demo-fallback" src="assets/primal-dual-saddle.svg" alt="Primal–dual saddle with primal x and dual y directions." width="600" height="520" fetchpriority="high">
+      <span class="hero-demo-placeholder" role="status">Loading demo…</span>
+      <noscript><span class="hero-demo-placeholder">Open demo to explore the algorithm.</span></noscript>
       <canvas id="home-demo-scene" tabindex="-1" aria-hidden="true"></canvas>
     </div>
     <div class="hero-demo-heading"><span class="hero-demo-status" id="home-demo-status">Demo preview</span><span class="hero-demo-open">Open demo <span aria-hidden="true">↗</span></span></div>

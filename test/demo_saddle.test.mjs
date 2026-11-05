@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {makeSaddleProblem, solveSaddle, objective, lagrangian, localPrimal, localDual,
   saddleMetrics, projectBox} from '../docs/javascripts/demo-saddle-solver.mjs';
 import {buildTimeline, buildInnerTimeline, buildDualTimeline, sampleTimeline} from '../docs/javascripts/demo-saddle-timeline.mjs';
+import {demoExamples} from '../docs/javascripts/demo-saddle-comparison.mjs';
+import {subproblemGeometry} from '../docs/javascripts/demo-subproblem.mjs';
 
 const near = (a, b, tol = 1e-10) => assert.ok(Math.abs(a - b) <= tol, `${a} differs from ${b}`);
 const nearPoint = (a,b,tol=1e-10) => a.forEach((v,i)=>near(v,b[i],tol));
@@ -119,6 +121,49 @@ test('the dual proximal curve is concave, uses extrapolated x, and is maximized 
     'The displayed pair coordinate x+ must not replace extrapolated x in the dual gradient');
 });
 
+test('the two-dimensional contour extension preserves the scalar objectives and their feasible minima', () => {
+  const scalarExamples=Object.fromEntries(Object.entries(demoExamples).filter(([,p])=>p.kind!=='conic'));
+  assert.equal(Object.keys(scalarExamples).length,4);
+  for(const [name,options] of Object.entries(scalarExamples))for(const halpern of [false,true]){
+    const p=makeSaddleProblem({...options,halpern}),result=solveSaddle(p);
+    assert.equal(result.status,'converged',`${name}, halpern=${halpern}`);
+    for(const r of [result.records[0],result.records.at(-1)])for(const dual of [false,true]){
+      const g=subproblemGeometry(p,r,dual);
+      const scalar=u=>dual?-localDual(p,r,u):localPrimal(p,r,u);
+      const lower=dual?(p.constraint==='equality'?-Infinity:0):p.lower;
+      const upper=dual?Infinity:p.upper;
+      const auxiliaryCurvature=.45*(dual?1/p.sigma:p.q+1/p.tau);
+      const feasible=u=>Math.max(lower,Math.min(upper,u));
+      assert.equal(g.lower,lower);assert.equal(g.upper,upper);
+      near(g.optimum,dual?r.yp:r.xp);
+      assert.ok(g.optimum>=lower&&g.optimum<=upper);
+      // Compare to the original objective, not another completed-square formula.
+      for(const u of [g.center-.7,g.center+.3,g.optimum])for(const v of [0,-.6,.4]){
+        near(g.value(u,v),scalar(u)-scalar(g.center)+auxiliaryCurvature*v*v/2);
+        if(v!==0)assert.ok(g.value(u,v)>g.value(u,0));
+      }
+      const candidates=[g.center-2,g.center+2,g.optimum-.3,g.optimum+.3,0]
+        .map(feasible).concat([lower,upper].filter(Number.isFinite));
+      for(const u of candidates)for(const v of [0,-.6,.4]){
+        assert.ok(g.value(g.optimum,0)<=g.value(u,v)+1e-10);
+        assert.ok(scalar(g.optimum)<=scalar(u)+1e-10);
+      }
+    }
+    if(name==='projection'){
+      const r=result.records[0];
+      for(const dual of [false,true]){
+        const g=subproblemGeometry(p,r,dual);
+        assert.ok(g.center<g.lower-.1,'Both first subproblems must have an unconstrained minimum outside the feasible set');
+        near(g.optimum,g.lower);assert.ok(g.value(g.optimum,0)>0);
+      }
+      assert.ok(result.records.length>1);
+      assert.ok(r.metrics.error>result.tolerance);
+      assert.ok(Math.hypot(r.xp-p.saddle[0],r.yp-p.saddle[1])>.5,
+        'Solving both first subproblems must not be confused with solving the outer problem');
+    }
+  }
+});
+
 test('inequality and equality modes converge to independent KKT solutions', () => {
   for(const halpern of [false,true])for(const q of [.5,1,2,4])for(const a of [-2,-.3,.5,1.8,2.5])for(const b of [.5,1]){
     const p=makeSaddleProblem({...boundary,q,a,b,halpern}),result=solveSaddle(p),r=result.records.at(-1);
@@ -149,26 +194,25 @@ test('the main story automatically expands primal and dual, then follows real ca
   for(const options of presets)for(const halpern of [false,true]){
     const p=makeSaddleProblem({...options,halpern}),result=solveSaddle(p),events=buildTimeline(p,result);
     const firstInner=buildInnerTimeline(p,result.records[0]),firstDual=buildDualTimeline(p,result.records[0]);
-    assert.equal(events.length,result.records.length+1+firstInner.length+firstDual.length);
+    assert.equal(events.length,result.records.length+firstInner.length+firstDual.length-1);
     assert.equal(events.scope,'outer');assert.equal(events[0].part,'primal');
-    nearPoint(events[0].from,events[0].to);assert.equal(events[0].duration,900);
-    const dualIndex=events.findIndex(e=>e.part==='dual');
-    assert.equal(dualIndex,firstInner.length+1);
-    assert.deepEqual(events.slice(1,dualIndex).map(e=>e.part),firstInner.map(e=>e.part));
+    nearPoint(events[0].from,events[0].to);assert.equal(events[0].duration,450);
+    const dualIndex=events.findIndex(e=>e.scope==='dual');
+    assert.equal(dualIndex,firstInner.length);
+    assert.deepEqual(events.slice(1,dualIndex).map(e=>e.part),firstInner.slice(0,-1).map(e=>e.part));
     assert.ok(events.slice(1,dualIndex).every(e=>e.scope==='inner'&&e.iteration===0));
-    const trajectoryIndex=dualIndex+1+firstDual.length;
-    assert.deepEqual(events.slice(dualIndex+1,trajectoryIndex).map(e=>e.part),firstDual.map(e=>e.part));
-    assert.ok(events.slice(dualIndex+1,trajectoryIndex).every(e=>e.scope==='dual'&&e.iteration===0));
+    const trajectoryIndex=dualIndex+firstDual.length;
+    assert.deepEqual(events.slice(dualIndex,trajectoryIndex).map(e=>e.part),firstDual.map(e=>e.part));
+    assert.ok(events.slice(dualIndex,trajectoryIndex).every(e=>e.scope==='dual'&&e.iteration===0));
+    assert.ok(events.slice(1,trajectoryIndex).every(e=>e.scope!=='outer'));
+    assert.equal(events[dualIndex].transitionFrom,'inner');
+    assert.ok(firstDual.every(e=>e.transitionFrom===undefined));
     assert.ok(events.slice(trajectoryIndex).every(e=>e.scope==='outer'));
     for(let i=0;i<events.length;i++){
       const e=events[i];
       if(i){
         nearPoint(e.from,events[i-1].to);near(e.liftFrom,events[i-1].liftTo);
         near(e.blendFrom,events[i-1].blendTo);near(e.dualFrom,events[i-1].dualTo);
-      }
-      if(e.part==='dual'){
-        nearPoint(e.from,[e.r.xp,e.r.y]);nearPoint(e.to,e.from);
-        assert.equal(e.iteration,0);assert.equal(e.mode,'detail');assert.equal(e.duration,700);
       }
       if(e.part==='trajectory'){
         const previous=result.records[e.iteration-1];
@@ -182,13 +226,17 @@ test('the main story automatically expands primal and dual, then follows real ca
     assert.ok(segments.at(-1).duration<segments[0].duration,'Small late steps should play faster');
     assert.ok(events.reduce((sum,e)=>sum+e.duration,0)<30000);
     near(sampleTimeline(events,1).innerBlend,0);
-    near(sampleTimeline(events,dualIndex).innerBlend,0);
-    near(sampleTimeline(events,dualIndex+1).dualBlend,0);
+    near(sampleTimeline(events,dualIndex).innerBlend,1);
+    near(sampleTimeline(events,dualIndex).dualBlend,0);
+    near(sampleTimeline(events,dualIndex+.5).innerBlend,.5);
+    near(sampleTimeline(events,dualIndex+.5).dualBlend,.5);
+    near(sampleTimeline(events,dualIndex+1).innerBlend,0);
+    near(sampleTimeline(events,dualIndex+1).dualBlend,1);
     near(sampleTimeline(events,trajectoryIndex).dualBlend,0);
   }
 });
 
-test('dual close-up shows real ascent and projection while holding the pairing coordinate x+ fixed', () => {
+test('dual close-up returns the constrained optimum in one update with x+ fixed', () => {
   const examples=[{}, {...boundary,a:-.3,initial:[-.8,1]}];
   let hasProjection=false;
   for(const options of examples){
@@ -196,16 +244,11 @@ test('dual close-up shows real ascent and projection while holding the pairing c
     const r=p.constraint==='equality'?result.records[0]:result.records.find(r=>r.trialY<0);
     assert.ok(r);
     const events=buildDualTimeline(p,r);
-    assert.deepEqual(events.map(e=>e.part),['enter','ascent','project','settle','exit']);
+    assert.deepEqual(events.map(e=>e.part),['enter','optimum','settle','exit']);
     assert.equal(events.scope,'dual');
-    const ascent=events[1],projection=events[2];
-    nearPoint(ascent.from,[r.xp,r.y]);nearPoint(ascent.to,[r.xp,r.trialY]);
-    nearPoint(projection.from,[r.xp,r.trialY]);nearPoint(projection.to,[r.xp,r.yp]);
-    if(p.constraint==='equality'){
-      nearPoint(projection.from,projection.to);assert.match(projection.caption,/free/);
-    } else {
-      assert.ok(projection.from[1]<0);near(projection.to[1],0);hasProjection=true;
-    }
+    nearPoint(events[1].from,[r.xp,r.y]);nearPoint(events[1].to,[r.xp,r.yp]);
+    near(r.yp,p.constraint==='equality'?r.trialY:Math.max(0,r.trialY));
+    if(r.trialY<0&&p.constraint==='inequality')hasProjection=true;
     for(let i=0;i<events.length;i++){
       const e=events[i];assert.equal(e.scope,'dual');assert.equal(e.stage,1);
       near(e.from[0],r.xp);near(e.to[0],r.xp);
@@ -221,24 +264,24 @@ test('dual close-up shows real ascent and projection while holding the pairing c
   assert.ok(hasProjection,'Test an actual dual-cone projection, not only an identity');
 });
 
-test('standalone inner inspection retains true projection steps and returns only the solved primal coordinate', () => {
+test('standalone primal close-up returns its constrained optimum in one update', () => {
   const p=makeSaddleProblem(boundary),result=solveSaddle(p),r=result.records[1];
   const events=buildInnerTimeline(p,r),outer=buildTimeline(p,result);
   assert.equal(events[0].part,'enter');assert.equal(events.at(-1).part,'exit');
-  assert.match(events[0].caption,/outer iteration waits for x⁺/);
-  assert.equal(events.find(e=>e.part==='settle').duration,1400);
-  assert.equal(events.at(-1).duration,1300);
+  assert.deepEqual(events.map(e=>e.part),['enter','optimum','settle','exit']);
+  nearPoint(events[1].to,[r.xp,r.y]);
+  assert.equal(events.find(e=>e.part==='optimum').duration,1800);
+  assert.equal(events.find(e=>e.part==='settle').duration,800);
+  assert.equal(events.at(-1).duration,500);
   for(let i=0;i<events.length;i++){
     const e=events[i];assert.equal(e.scope,'inner');near(e.from[1],r.y);near(e.to[1],r.y);
     if(i){nearPoint(e.from,events[i-1].to);near(e.liftFrom,events[i-1].liftTo);near(e.blendFrom,events[i-1].blendTo);}
-    if(e.part==='gradient'){const s=r.innerSteps[e.innerStep];near(e.from[0],s.from);near(e.to[0],s.trial);}
-    if(e.part==='project'){const s=r.innerSteps[e.innerStep];near(e.from[0],s.trial);near(e.to[0],s.to);}
   }
   const final=sampleTimeline(events,events.length);
   assert.equal(final.done,true);assert.equal(final.innerBlend,0);nearPoint(final.point,[r.xp,r.y]);
   assert.equal(final.completed,1);
   const firstInner=buildInnerTimeline(p,result.records[0]);
-  nearPoint(sampleTimeline(firstInner,firstInner.length).point,outer.find(e=>e.part==='dual').from);
+  nearPoint(sampleTimeline(firstInner,firstInner.length).point,outer.find(e=>e.scope==='dual').from);
   const ownSegment=outer.find(e=>e.iteration===1&&e.part==='trajectory');
   near(ownSegment.to[0],final.point[0]);
 });
@@ -249,6 +292,14 @@ test('trajectory sampling is linear and continuous while detail and inner sampli
     for(let i=0;i<events.length;i++){
       const e=events[i],start=sampleTimeline(events,i),middle=sampleTimeline(events,i+.5);
       nearPoint(start.point,e.from);
+      near(start.eventProgress,0);near(start.easedProgress,0);
+      near(middle.eventProgress,.5);near(middle.easedProgress,.5);
+      if(e.part==='enter')near(middle.solveProgress,0);
+      if(e.part==='optimum'){
+        near(start.solveProgress,0);near(middle.solveProgress,.5);
+        near(sampleTimeline(events,i+.95).solveProgress,1);
+      }
+      if(['settle','exit'].includes(e.part))near(middle.solveProgress,1);
       for(const t of [.05,.2,.8,.95]){
         const sampled=sampleTimeline(events,i+t);
         if(e.mode==='trajectory')nearPoint(sampled.point,e.from.map((v,j)=>v+t*(e.to[j]-v)));
@@ -261,6 +312,7 @@ test('trajectory sampling is linear and continuous while detail and inner sampli
       nearPoint(middle.motionPath.at(-1),middle.point);
     }
     assert.equal(sampleTimeline(events,-1).cursor,0);assert.equal(sampleTimeline(events,NaN).cursor,0);
+    near(sampleTimeline(events,events.length).solveProgress,1);
   }
   assert.equal(sampleTimeline([],0).done,true);
 });
@@ -272,7 +324,7 @@ test('the main outcome is the final computed candidate, including a single-recor
     assert.equal(final.done,true);nearPoint(final.point,[last.xp,last.yp]);
     assert.equal(final.completed,result.records.length);assert.equal(final.scope,'outer');
     near(final.dualBlend,0);
-    assert.equal(final.title,result.status==='converged'?'At the saddle point':'Run complete');
+    assert.equal(final.title,result.status==='converged'?'Converged to a saddle point':'Run complete');
     assert.equal(final.mode,'trajectory');
   }
 });
@@ -294,8 +346,8 @@ test('the animation hides Halpern constructions without changing any solver reco
 
 test('the inequality example retains substantive box projection and genuine dual cone projection', () => {
   const p=makeSaddleProblem(boundary),result=solveSaddle(p),r=result.records[1];
-  const project=buildInnerTimeline(p,r).find(e=>e.part==='project'&&e.r.innerSteps[e.innerStep].projected);
-  assert.ok(project);assert.ok(project.from[0]>project.to[0]);near(project.to[0],p.upper);
+  const project=r.innerSteps.find(s=>s.projected);
+  assert.ok(project);assert.ok(project.trial>project.to);near(project.to,p.upper);
   const original=solveSaddle(makeSaddleProblem({...boundary,innerInitialScale:1})).records[0];
   near(original.innerSteps[0].trial,.76);near(original.innerSteps[0].to,.54);near(original.xp,.175);
   const interior=solveSaddle(makeSaddleProblem({...boundary,a:-.3,initial:[-.8,1],halpern:true}));

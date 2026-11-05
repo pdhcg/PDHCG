@@ -4,67 +4,66 @@
     <h1>From updates to convergence.</h1>
     <p>Primal. Dual. Then convergence.</p>
   </div>
-  <div class="demo-problem" id="demo-problem-formula" aria-label="Minimize 0.025 times x minus 3 squared over zero to six, subject to x equals 3">
-    <span class="demo-min">min<sub>0 ≤ x ≤ 6</sub></span>
-    <span>0.025(x − 3)²</span>
+  <div class="demo-problem" id="demo-problem-formula" aria-label="Minimize 0.025 times the squared Euclidean distance from x to (60, 3), with norm x at most 6, subject to (3, x minus (0, minus 0.4)) in the three-dimensional second-order cone">
+    <span class="demo-min">min<sub>‖x‖ ≤ 6</sub></span>
+    <span>0.025‖x − (60, 3)‖²</span>
     <span class="demo-subject">subject to</span>
-    <span>x = 3</span>
+    <span>(3, x − (0, −0.4)) ∈ 𝒬₃</span>
   </div>
 </div>
 
 <div class="demo-options">
   <label for="demo-example">Example</label>
-  <select id="demo-example"><option value="spiral">Classic spiral</option><option value="elliptic">Unequal step sizes</option><option value="boundary">Active inequality</option></select>
+  <select id="demo-example"><option value="conic">Conic quadratic program</option><option value="projection">Active constraints</option><option value="spiral">Equality-constrained QP</option><option value="elliptic">Unequal step sizes</option><option value="boundary">Inequality-constrained QP</option></select>
   <div class="demo-view-switch" role="group" aria-label="Demo view">
     <button type="button" id="demo-show-comparison" aria-pressed="true">Full demo</button>
     <button type="button" id="demo-show-steps" aria-pressed="false">Explore updates</button>
   </div>
-  <label class="demo-halpern-option" for="demo-halpern"><input type="checkbox" id="demo-halpern"><span>Halpern</span></label>
+  <label class="demo-halpern-option" for="demo-halpern" title="Restarted reflected Halpern iteration"><input type="checkbox" id="demo-halpern"><span>Halpern</span></label>
 </div>
 
-<section class="demo-theater" aria-label="Animated primal–dual saddle problem">
+<section class="demo-theater" aria-label="PDHG updates and convergence">
   <div class="demo-trajectory-header">
-    <div class="demo-trajectory-status"><span id="demo-trajectory-title">Convergence trajectory</span><span id="demo-trajectory-iteration">Iteration 1</span></div>
+    <div class="demo-trajectory-status"><span id="demo-trajectory-title">Primal–dual iterates</span><span id="demo-trajectory-iteration">Iteration 1</span></div>
     <button type="button" id="demo-replay-steps">Replay steps <span aria-hidden="true">↗</span></button>
   </div>
   <div class="demo-comparison-legend" aria-label="Trajectory colors">
     <span class="demo-legend-method"><i class="demo-line-plain" aria-hidden="true"></i>Without Halpern <span id="demo-plain-status"></span></span>
-    <span class="demo-legend-method"><i class="demo-line-halpern" aria-hidden="true"></i>With Halpern <span id="demo-halpern-status"></span></span>
+    <span class="demo-legend-method" title="PDHG with restarted reflected Halpern iteration"><i class="demo-line-halpern" aria-hidden="true"></i>With Halpern <span id="demo-halpern-status"></span></span>
   </div>
   <div class="demo-detail-header">
   <div class="demo-context">
     <nav class="demo-breadcrumb" aria-label="Demonstration level">
-      <button type="button" id="demo-outer">Outer iteration</button>
-      <span id="demo-inner-breadcrumb"><span aria-hidden="true">›</span><span id="demo-subproblem-label">Primal subproblem</span></span>
+      <button type="button" id="demo-outer">PDHG iteration</button>
+      <span id="demo-inner-breadcrumb"><span aria-hidden="true">›</span><span id="demo-subproblem-label">Primal proximal subproblem</span></span>
     </nav>
     <span id="demo-iteration">Iteration 1</span>
   </div>
   <div class="demo-algorithm-map" id="demo-outer-flow" role="group" aria-label="PDHG iteration: primal solve, then dual update">
     <div class="demo-map-pdhg">
       <div class="demo-map-pdhg-steps">
-        <button type="button" class="demo-map-node demo-map-primal" id="demo-inspect" aria-expanded="false" aria-controls="demo-scene" title="Open the inner primal solve">
+        <button type="button" class="demo-map-node demo-map-primal" id="demo-inspect" aria-expanded="false" aria-controls="demo-scene" title="Open the primal subproblem">
           <span class="demo-node-label">Primal <span class="demo-node-verb">update</span></span>
-          <span class="demo-primal-module">Inner solve <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></span>
+          <span class="demo-primal-module">Subproblem <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></span>
           <span class="demo-primal-connector" aria-hidden="true"></span>
         </button>
         <span class="demo-map-arrow demo-primal-to-dual" aria-hidden="true">→</span>
         <button type="button" class="demo-map-node demo-map-dual" id="demo-inspect-dual" aria-expanded="false" aria-controls="demo-scene" title="Open the dual subproblem">
           <span class="demo-node-label">Dual <span class="demo-node-verb">update</span></span>
-          <span class="demo-dual-module">Dual step <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></span>
+          <span class="demo-dual-module">Projection <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></span>
           <span class="demo-dual-connector" aria-hidden="true"></span>
         </button>
       </div>
     </div>
   </div>
   </div>
-  <div class="demo-inner-interface" aria-label="The selected update receives outer coordinates and returns an updated coordinate">
-    <div class="demo-inner-paused">Outer loop paused here</div>
+  <div class="demo-inner-interface" aria-label="The selected subproblem receives the current primal and dual variables and returns the updated variable">
     <div class="demo-inner-io">
       <div class="demo-io-value"><span class="demo-io-label">Inputs</span><span id="demo-inner-input"><span>xₖ</span><span>yₖ</span></span></div>
       <span class="demo-io-arrow" aria-hidden="true">→</span>
-      <span class="demo-io-module" id="demo-subproblem-module">Inner solve</span>
-      <span class="demo-io-arrow" aria-hidden="true">→</span>
-      <div class="demo-io-value demo-io-output"><span class="demo-io-label">Output</span><span id="demo-inner-output" aria-live="polite">Computing x⁺…</span></div>
+      <span class="demo-io-module" id="demo-subproblem-module">Primal</span>
+      <span class="demo-io-arrow demo-io-return-arrow" aria-hidden="true">→</span>
+      <div class="demo-io-value demo-io-output"><span class="demo-io-label">Output</span><span id="demo-inner-output" aria-live="polite">x⁺</span></div>
     </div>
   </div>
   <div class="demo-viewport">
@@ -73,12 +72,11 @@
         <span id="demo-zoom-label">Full trajectory</span>
         <button type="button" id="demo-overview">Zoom in</button>
       </div>
-      <div class="demo-inner-flow" aria-label="Subproblem update steps"><span id="demo-substep-first">Gradient step</span><span aria-hidden="true">→</span><span id="demo-substep-second">Project</span><span id="demo-inner-count"></span></div>
       <div class="demo-level-actions">
-        <button type="button" id="demo-return"><span>Continue outer<span class="demo-return-detail"> iteration</span></span><span aria-hidden="true">↗</span></button>
+        <button type="button" id="demo-return"><span>View trajectory</span><span aria-hidden="true">↗</span></button>
       </div>
     </div>
-    <canvas id="demo-scene" tabindex="0" role="img" aria-label="Three-dimensional primal–dual saddle and the full convergence trajectory. Orange shows primal updates; teal shows dual updates. Drag or use arrow keys to rotate. Press R to reset the view."></canvas>
+    <canvas id="demo-scene" tabindex="0" role="img" aria-label="Two-dimensional projection of primal and dual iterates, with subproblem views in the true primal coordinates and a section of the dual cone. Drag or use arrow keys to rotate the outer view. Press R to reset the view."></canvas>
     <div class="demo-scene-bottom">
       <span class="demo-scene-hint">Drag to rotate</span>
       <div class="demo-view-actions">
@@ -93,7 +91,7 @@
   </div>
   <div class="demo-caption" aria-live="polite" aria-atomic="true">
     <strong id="demo-stage-title">PDHG updates the primal–dual pair.</strong>
-    <p id="demo-stage-caption">The inner solve supplies the primal update. The dual update follows.</p>
+    <p id="demo-stage-caption">The primal subproblem computes x⁺. The dual update computes y⁺.</p>
   </div>
   <div class="demo-playback">
     <div class="demo-play-buttons">
