@@ -56,14 +56,15 @@ async function initializePreview(root) {
     root.dataset.part = model.part;
     root.dataset.cursor = cursor.toFixed(3);
     root.dataset.iteration = model.compareCursor.toFixed(3);
-    stageLabel = model.storyPhase === 'trajectory' ? 'Convergence' :
-      model.scope === 'dual' || model.stage === 1 ? 'Dual update' : 'Primal · inner solve';
+    stageLabel = model.storyPhase === 'trajectory' ? 'Primal–dual iterates' :
+      model.scope === 'dual' || model.stage === 1 ? 'Dual update' : 'Primal update';
     status.textContent = stageLabel;
   }
 
   function fallback() {
     available = false;
     stageLabel = 'Demo preview';
+    root.querySelector('.hero-demo-placeholder').textContent = 'Preview unavailable · Open demo';
     stop();
     root.dataset.ready = 'false';
     root.dataset.resetting = 'false';
@@ -121,7 +122,7 @@ async function initializePreview(root) {
       import('./demo-saddle-comparison.mjs')
     ]);
     sampleComparisonStory = comparisonModule.sampleComparisonStory;
-    comparison = comparisonModule.createComparison();
+    comparison = comparisonModule.createComparison(comparisonModule.demoExamples.conic);
     events = comparisonModule.buildComparisonStory(comparison);
     scene = new sceneModule.SaddleScene(canvas, {compact: true});
     cursor = motion.matches ? events.length : 0;

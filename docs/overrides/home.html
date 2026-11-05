@@ -1,6 +1,11 @@
 {% extends "main.html" %}
 
 {% block extrahead %}
+  {% if page.is_homepage %}
+    {% for module in ['home-demo.js', 'demo-saddle-scene.mjs', 'demo-saddle-comparison.mjs', 'demo-saddle-solver.mjs', 'demo-saddle-timeline.mjs', 'demo-subproblem.mjs', 'demo-conic-solver.mjs', 'vendor/three.mjs'] %}
+      <link rel="modulepreload" href="{{ ('javascripts/' ~ module) | url }}">
+    {% endfor %}
+  {% endif %}
   <meta property="og:title" content="PDHCG: A Scalable Solver for Convex Conic Quadratic Programming">
   <meta property="og:description" content="An open-source first-order solver for large-scale quadratic and conic programming. Built for NVIDIA GPUs, with Python and C interfaces.">
   <meta property="og:type" content="website">

@@ -1,5 +1,10 @@
 import * as T from './vendor/three.mjs';
-import {lagrangian, localPrimal, localDual, solveSaddle} from './demo-saddle-solver.mjs';
+import {lagrangian as scalarLagrangian, solveSaddle} from './demo-saddle-solver.mjs';
+
+import {conicDisplayLagrangian, solveConic} from './demo-conic-solver.mjs';
+import {drawSubproblem} from './demo-subproblem.mjs';
+
+const lagrangian=(p,x,y)=>p.kind==='conic'?conicDisplayLagrangian(p,x,y):scalarLagrangian(p,x,y);
 
 const mix=(a,b,t)=>a.map((v,i)=>v+(b[i]-v)*t);
 const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
@@ -8,6 +13,7 @@ export class SaddleScene {
   constructor(canvas,{compact=false}={}){
     this.canvas=canvas;this.ctx=canvas.getContext('2d');this.model=null;this.problem=null;
     this.compact=compact;
+    this.detailCanvas=document.createElement('canvas');this.detailContext=this.detailCanvas.getContext('2d');
     this.yaw=-1.75;this.pitch=1.06;this.zoom=1;this.overview=true;this.viewWindow=null;
     this.renderer=new T.WebGLRenderer({alpha:true,antialias:true,powerPreference:'low-power'});
     this.renderer.setClearColor(0,0);this.renderer.setPixelRatio(Math.min(devicePixelRatio,2));
@@ -50,7 +56,7 @@ export class SaddleScene {
     this.comparisonResult=comparisonResult;
     const star=p.saddle;
     // Both Halpern settings share the unaccelerated view scale.
-    const baseline=p.halpern?solveSaddle({...p,halpern:false}):result;
+    const baseline=p.halpern?(p.kind==='conic'?solveConic:solveSaddle)({...p,halpern:false}):result;
     const all=[p.initial,star,...baseline.records.map(r=>[r.xp,r.yp]),
       ...(comparisonResult?.records??[]).map(r=>[r.xp,r.yp])];
     const low=[0,1].map(i=>Math.min(...all.map(v=>v[i]))),high=[0,1].map(i=>Math.max(...all.map(v=>v[i])));
@@ -93,8 +99,39 @@ export class SaddleScene {
     const resized=this.canvas.width!==Math.round(W*dpr)||this.canvas.height!==Math.round(H*dpr);
     if(resized){this.canvas.width=Math.round(W*dpr);this.canvas.height=Math.round(H*dpr);this.renderer.setSize(W,H,false);}
     ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);
+    const inside=['inner','dual'].includes(m.scope);
+    this.renderer.domElement.style.visibility=inside?'hidden':'visible';
+    if(inside){
+      let view;
+      const transition=m.transitionFrom&&m.part==='enter';
+      const blend=transition?m.easedProgress:1;
+      if(transition&&blend<1){
+        const buffer=this.detailCanvas,layer=this.detailContext;
+        if(buffer.width!==this.canvas.width||buffer.height!==this.canvas.height){
+          buffer.width=this.canvas.width;buffer.height=this.canvas.height;
+        }
+        const paint=(model,alpha,hideLabels=false)=>{
+          layer.setTransform(dpr,0,0,dpr,0,0);layer.clearRect(0,0,W,H);
+          const result=drawSubproblem(layer,W,H,p,model,C,this.compact,{hideLabels});
+          ctx.save();ctx.globalAlpha=alpha;ctx.drawImage(buffer,0,0,W,H);ctx.restore();
+          return result;
+        };
+        paint({...m,scope:m.transitionFrom,part:'settle',solveProgress:1},1-blend,true);
+        view=paint(m,blend);
+      }else view=drawSubproblem(ctx,W,H,p,m,C,this.compact);
+      Object.assign(this.canvas.dataset,{view:'subproblem',point:m.point.join(','),part:m.part,
+        inner:m.scope==='inner'?'1.000':'0.000',dual:m.scope==='dual'?'1.000':'0.000',
+        screenPoint:view.screenPoint.join(','),trailCount:String(m.completed),
+        feasibleMinimum:String(view.geometry.optimum),unconstrainedMinimum:String(view.geometry.center),
+        activeConstraint:String(view.active),solveProgress:view.solveProgress.toFixed(4),
+        levelRadius:view.levelRadius.toFixed(6),contactRadius:view.contactRadius.toFixed(6),
+        transition:transition?`${m.transitionFrom}-to-${m.scope}`:'',transitionProgress:String(blend),
+        halpernPoint:'',halpernTrailCount:''});
+      return;
+    }
+    this.canvas.dataset.view='outer';this.canvas.dataset.transition='';
     const focus=this.center;
-    const inner=clamp(m.innerBlend||0,0,1),dual=clamp(m.dualBlend||0,0,1),close=Math.max(inner,dual),outer=1-close;
+    const close=0,outer=1;
 
     this.camera.position.set(focus[0]+10*Math.cos(this.yaw)*Math.cos(this.pitch),focus[1]+10*Math.sin(this.yaw)*Math.cos(this.pitch),focus[2]+10*Math.sin(this.pitch));
     this.camera.lookAt(...focus);this.camera.updateMatrixWorld();
@@ -146,34 +183,8 @@ export class SaddleScene {
     this.surface.material.opacity=(this.dark?.61:.55)*outer*outer/Math.max(1,Math.log10(this.magnification+1));
     this.renderer.render(this.scene,this.camera);
     const P3=v=>{const q=new T.Vector3(...v).project(this.camera);return[(q.x+1)*W/2,(1-q.y)*H/2];};
-    // Keep the same subproblem curve while bringing its fixed-y slice forward.
-    // Independent plot scales make a small, late subproblem readable as well.
-    const innerXs=[r.x,r.xp,...r.innerSteps.flatMap(s=>[s.from,s.trial,s.to])];
-    const span=Math.max(.05,Math.max(...innerXs)-Math.min(...innerXs));
-    const ilow=Math.min(...innerXs)-span*.3,ihigh=Math.max(...innerXs)+span*.3;
-    const isamples=Array.from({length:80},(_,i)=>ilow+(ihigh-ilow)*i/79);
-    const izs=isamples.flatMap(x=>[localPrimal(p,r,x),lagrangian(p,x,r.y)]);
-    const zlow=Math.min(...izs),zhigh=Math.max(...izs),zrange=Math.max(1e-8,zhigh-zlow);
-    // The dual close-up maximizes the true proximal objective at fixed x-bar.
-    // It has its own y-axis and scale; its pair still returns to (x-plus, y-plus).
-    const dualRadius=Math.max(.05,Math.abs(r.y-r.trialY),Math.abs(r.yp-r.trialY));
-    const dlow=r.trialY-dualRadius*1.2,dhigh=r.trialY+dualRadius*1.2;
-    const dsamples=Array.from({length:81},(_,i)=>dlow+(dhigh-dlow)*i/80);
-    const dzs=dsamples.map(y=>localDual(p,r,y)),dzlow=Math.min(...dzs),dzhigh=localDual(p,r,r.trialY),dzrange=Math.max(1e-9,dzhigh-dzlow);
-    const iw=this.compact?W-56:Math.min(W-100,660),ih=H-(this.compact?116:146),left=(W-iw)/2,bottomPlot=H-(this.compact?52:62);
-    const P=v=>{
-      if(v[3]==='dual'){
-        const q=P3([v[0],v[1],lagrangian(p,v[0],v[1])*this.scaleZ]);
-        const flat=[left+(v[1]-dlow)/(dhigh-dlow)*iw,bottomPlot-(v[2]/this.scaleZ-dzlow)/dzrange*ih];
-        return [q[0]*(1-dual)+flat[0]*dual,q[1]*(1-dual)+flat[1]*dual];
-      }
-      const q=P3(v),flat=[left+(v[0]-ilow)/(ihigh-ilow)*iw,
-        bottomPlot-(v[2]/this.scaleZ-zlow)/zrange*ih];
-      return [q[0]*(1-inner)+flat[0]*inner,q[1]*(1-inner)+flat[1]*inner];
-    };
-    const lifted=(xy,lift=0)=>[...xy,(lagrangian(p,...xy)+lift*(xy[0]-r.x)**2/(2*p.tau))*this.scaleZ];
-    const onDual=y=>[r.xp,y,localDual(p,r,y)*this.scaleZ,'dual'];
-    const displayPoint=xy=>m.scope==='dual'?onDual(xy[1]):lifted(xy,m.lift);
+    const P=P3;
+    const displayPoint=xy=>[...xy,lagrangian(p,...xy)*this.scaleZ];
     const path=(points,color,width=1,alpha=1,dash=[])=>{
       if(points.length<2)return;ctx.beginPath();points.forEach((v,i)=>{const q=P(v);i?ctx.lineTo(...q):ctx.moveTo(...q);});ctx.strokeStyle=color;ctx.lineWidth=width;ctx.lineCap='round';ctx.lineJoin='round';ctx.globalAlpha=alpha;ctx.setLineDash(dash);ctx.stroke();ctx.globalAlpha=1;ctx.setLineDash([]);
     };
@@ -196,8 +207,8 @@ export class SaddleScene {
         path(line(low[0],high[0],x=>onSaddle([x,p.saddle[1]])),C.orange,1.2,.4*outer);
         path(line(low[1],high[1],y=>onSaddle([p.saddle[0],y])),C.teal,1.2,.4*outer);
         if(close<.4){
-          textAt(onSaddle([high[0],p.saddle[1]]),'primal x',C.orange,12,16);
-          textAt(onSaddle([p.saddle[0],p.saddle[1]+.82*(high[1]-p.saddle[1])]),'dual y',C.teal,9,-14);
+          textAt(onSaddle([high[0],p.saddle[1]]),p.kind==='conic'?'primal x₁':'primal x',C.orange,12,16);
+          textAt(onSaddle([p.saddle[0],p.saddle[1]+.82*(high[1]-p.saddle[1])]),p.kind==='conic'?'dual −y₁':'dual y',C.teal,9,-14);
         }
         for(const f of [-.6,0,.6]){
           const x=this.center[0]+f*this.rx,yr=this.ry*Math.sqrt(1-f*f);
@@ -234,59 +245,8 @@ export class SaddleScene {
       point(onSaddle(p.initial),C.ink,close<.4?'start':'',4.5,.8*outer);
       point(onSaddle(p.saddle),C.ink,close<.4?'solution':'',4.5,.85*outer);
     }
-    if(m.scope==='inner'){
-      const curve=line(ilow,ihigh,x=>[x,r.y,localPrimal(p,r,x)*this.scaleZ]);
-      const slice=line(ilow,ihigh,x=>onSaddle([x,r.y]));
-      const opacity=Math.max(inner,m.localOpacity||0);
-      path(slice,C.teal,1.5,.45*opacity);
-      // The box is a constraint of this primal subproblem; the separate row
-      // constraint remains the responsibility of the outer dual update.
-      if(inner>.01){
-        const low=Math.max(ilow,p.lower),high=Math.min(ihigh,p.upper);
-        const rect=[[low,r.y,zlow*this.scaleZ],[high,r.y,zlow*this.scaleZ],
-          [high,r.y,zhigh*this.scaleZ],[low,r.y,zhigh*this.scaleZ]].map(P);
-        ctx.beginPath();rect.forEach((q,i)=>i?ctx.lineTo(...q):ctx.moveTo(...q));ctx.closePath();
-        ctx.fillStyle=C.orange;ctx.globalAlpha=.045*inner;ctx.fill();ctx.globalAlpha=1;
-        for(const bound of [p.lower,p.upper])if(bound>ilow&&bound<ihigh){
-          path([[bound,r.y,zlow*this.scaleZ],[bound,r.y,zhigh*this.scaleZ]],C.orange,1.1,.4*inner,[4,5]);
-          if(inner>.7)textAt([bound,r.y,zlow*this.scaleZ],bound===p.upper?'upper bound':'lower bound',C.orange,8,18);
-        }
-      }
-      path(curve,C.orange,2.5,opacity);
-      if(inner>.5){
-        textAt(curve[Math.floor(curve.length*.84)],'primal subproblem',C.orange,-100,-18);
-        textAt(slice[Math.floor(slice.length*.18)],'L(x, yₖ)',C.teal,-8,19);
-      }
-      for(const step of r.innerSteps.slice(0,m.innerStep||0))point([step.to,r.y,localPrimal(p,r,step.to)*this.scaleZ],C.orange,'',2.5,.35*inner);
-      if(m.part==='project'){
-        const trial=[m.from[0],r.y,localPrimal(p,r,m.from[0])*this.scaleZ];
-        const accepted=[m.to[0],r.y,localPrimal(p,r,m.to[0])*this.scaleZ];
-        path([trial,accepted],C.orange,1.5,.45,[4,5]);point(trial,C.orange,inner>.6?'primal step':'',4,.5);
-      }
-    }
-    if(m.scope==='dual'){
-      const curve=dsamples.map(onDual);
-      if(p.constraint==='inequality'&&dlow<0&&dhigh>0){
-        const rect=[[r.xp,0,dzlow*this.scaleZ,'dual'],[r.xp,dhigh,dzlow*this.scaleZ,'dual'],
-          [r.xp,dhigh,dzhigh*this.scaleZ,'dual'],[r.xp,0,dzhigh*this.scaleZ,'dual']].map(P);
-        ctx.beginPath();rect.forEach((q,i)=>i?ctx.lineTo(...q):ctx.moveTo(...q));ctx.closePath();
-        ctx.fillStyle=C.teal;ctx.globalAlpha=.045*dual;ctx.fill();ctx.globalAlpha=1;
-        path([[r.xp,0,dzlow*this.scaleZ,'dual'],[r.xp,0,dzhigh*this.scaleZ,'dual']],C.teal,1.1,.5*dual,[4,5]);
-        if(dual>.7)textAt([r.xp,0,dzlow*this.scaleZ,'dual'],'y ≥ 0',C.teal,8,-10);
-      }
-      path(curve,C.teal,2.5,dual);
-      if(dual>.5){
-        textAt(curve[Math.floor(curve.length*.2)],'dual subproblem',C.teal,-75,-18);
-        textAt(curve.at(-1),'dual y',C.teal,-38,-12);
-        point(onDual(r.y),C.ink,m.part==='enter'||m.part==='ascent'?'yₖ':'',3.5,.45*dual);
-      }
-      if(m.part==='project'&&Math.abs(r.trialY-r.yp)>1e-10){
-        const trial=onDual(r.trialY),accepted=onDual(r.yp);
-        path([trial,accepted],C.teal,1.5,.5,[4,5]);point(trial,C.teal,dual>.6?'dual step':'',4,.5);
-      }
-    }
     if(m.done&&m.scope==='outer')point(onSaddle(m.point),C.teal,'',7);
-    else{
+    else if(!close){
       const color=m.scope==='inner'||m.stage===0?C.orange:C.teal;
       const visited=m.motionPath||[m.from,m.point];
       const motion=visited.flatMap((v,i)=>i?Array.from({length:30},(_,j)=>
@@ -302,7 +262,7 @@ export class SaddleScene {
     const fmt=v=>v.toFixed(digits);
     const baseline=H-44;
     const fixedX=m.scope==='dual'||m.scope!=='inner'&&m.part==='dual',fixedY=m.scope==='inner'||m.stage===0&&m.part!=='restart';
-    if(!m.comparison&&!this.compact){
+    if(!m.comparison&&!this.compact&&!close&&p.kind!=='conic'){
       ctx.fillStyle=C.orange;ctx.fillText(`${m.scope==='inner'?'inner u':m.scope==='dual'?'x̄':'x'}  ${fmt(m.scope==='dual'?r.xbar:m.point[0])}${fixedX?'  · fixed':''}`,pad,baseline-23);
       ctx.fillStyle=C.teal;ctx.fillText(`${m.scope==='inner'?'yₖ':'y'}  ${fmt(m.point[1])}${fixedY?'  · fixed':''}`,pad,baseline);
     }
@@ -323,8 +283,8 @@ export class SaddleScene {
       boxes.push({x,y,w:width});ctx.lineWidth=4;ctx.strokeStyle=C.paper;ctx.strokeText(l.text,x,y);ctx.fillStyle=l.color;ctx.fillText(l.text,x,y);
     }
     this.canvas.dataset.camera=`${this.yaw.toFixed(3)},${this.pitch.toFixed(3)},${this.zoom.toFixed(3)}`;
-    this.canvas.dataset.point=m.point.join(',');this.canvas.dataset.part=m.part;this.canvas.dataset.inner=inner.toFixed(3);
-    this.canvas.dataset.dual=dual.toFixed(3);
+    this.canvas.dataset.point=m.point.join(',');this.canvas.dataset.part=m.part;this.canvas.dataset.inner='0.000';
+    this.canvas.dataset.dual='0.000';
     this.canvas.dataset.zoom=this.magnification.toFixed(2);this.canvas.dataset.screenPoint=P(displayPoint(m.point)).join(',');
     this.canvas.dataset.trailCount=String(m.completed);
     this.canvas.dataset.halpernPoint=m.comparison?m.comparison.point.join(','):'';

@@ -1,13 +1,27 @@
 import {makeSaddleProblem, solveSaddle} from './demo-saddle-solver.mjs';
+import {makeConicProblem, solveConic} from './demo-conic-solver.mjs';
 import {buildIntroTimeline, sampleTimeline} from './demo-saddle-timeline.mjs';
+
+// Shared examples keep the homepage and interactive page on the same problem.
+export const demoExamples = {
+  conic: {kind: 'conic'},
+  projection: {q: .2, a: 2, b: 1, lower: 0, upper: 3, tau: .8, sigma: 1,
+    initial: [.1, .8], constraint: 'inequality'},
+  spiral: {},
+  elliptic: {tau: .3, sigma: .04 / .3},
+  boundary: {q: 1, a: 1.8, b: .5, tau: .6, sigma: .8, lower: -1.2, upper: .54,
+    initial: [-.8, 0], constraint: 'inequality'}
+};
 
 // Both methods solve the same problem from the same starting point. A shared
 // cursor counts outer updates, never a separately normalized animation time.
 export function createComparison(options = {}) {
-  const baselineProblem = makeSaddleProblem({...options, halpern: false});
-  const halpernProblem = makeSaddleProblem({...options, halpern: true});
-  const baseline = {problem: baselineProblem, result: solveSaddle(baselineProblem)};
-  const halpern = {problem: halpernProblem, result: solveSaddle(halpernProblem)};
+  const makeProblem = options.kind === 'conic' ? makeConicProblem : makeSaddleProblem;
+  const solve = options.kind === 'conic' ? solveConic : solveSaddle;
+  const baselineProblem = makeProblem({...options, halpern: false});
+  const halpernProblem = makeProblem({...options, halpern: true});
+  const baseline = {problem: baselineProblem, result: solve(baselineProblem)};
+  const halpern = {problem: halpernProblem, result: solve(halpernProblem)};
   return {baseline, halpern,
     iterations: Math.max(baseline.result.records.length, halpern.result.records.length)};
 }
